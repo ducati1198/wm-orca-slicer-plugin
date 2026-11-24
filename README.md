@@ -151,9 +151,31 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 - **Controls:** a temperature box and **Set** for Tool 1 to 4, the bed and the chamber, fan sliders (part, auxiliary, air filter), the speed factor (50 to 200 %), and **Cool down**.
 - **Spools:** click a spool in the filament card to set the material, nozzle temperature and colour, then **Save to printer**. The plugin saves it with the printer's `_ZR_SET_TOOL_INFO` macro, which the printer's own screens read.
 
-### 2.4 Filament in the file → toolhead
+### 2.4 ACE Pro and Endless spool
 
-A read-only picture of the file Orca has sliced: on the left the filaments of the file ("in the file"), on the right the four toolheads ("on the toolheads"), with a line between them. A **solid line** means the filament of the file matches the spool on that toolhead, a **dotted line** means it does not (other colour or material). Nothing is sent from this view; you choose the real map in the window after slicing, see [3](#3-process-settings-the-wm-tool-map-step).
+Lower on the Status page, the tab shows two cards. They appear only when the printer has the matching macros (the ACE Pro card only on a printer with an ACE Pro).
+
+<img src="docs/img/device-tab-ace-endless-spool.png" alt="Endless spool card, ACE Pro card and the Filament in the file to toolhead view" width="900">
+
+**Filament card**
+
+- **ACE Pro power:** on means the printer uses the ACE Pro for tool changes and slot moves.
+- **Auto load:** starts loading when a spool is put in a slot.
+
+**Endless spool card** (keeps a print going when a spool runs out)
+
+- **Endless spool:** another loaded toolhead takes over, but only if it has the **same colour and material**.
+- **Swap automatically:** swap and continue without asking.
+- **Swap on a tangle:** also swap when a tangle sensor pauses the print.
+- The ring and the chips (T1 to T4) show which toolhead is the spare for which, or **no spare**.
+
+**ACE Pro card:** the connection state (for example *connected, ready*), the **Dryer** (status, temperature, time left, and **Temp** and **Minutes** boxes with **Start** and **Stop**) and **Tool map and stats** (the ACE tool map, tool changes, purged length, cuts).
+
+### 2.5 Filament in the file → toolhead
+
+<img src="docs/img/filament-in-file-view.png" alt="Filament in the file to toolhead view with a warning that colours differ" width="760">
+
+A read-only picture of the filaments of the project open in Orca: on the left the filaments of the file ("in the file"), on the right the four toolheads ("on the toolheads"), with a line between them. A **solid line** means the filament of the file matches the spool on that toolhead, a **dotted line** means it does not (other colour or material). A yellow note under it says when a filament of the file is on a toolhead with another colour or material (here *Filament 1 (Black PLA) prints on toolhead 1 (Brown PLA)*). Nothing is sent from this view; you choose the real map in the window after slicing, see [3](#3-process-settings-the-wm-tool-map-step).
 
 ## 3. Process settings: the WM Tool Map step
 
@@ -180,6 +202,14 @@ If neither is set, or the printer is not approved yet (see [1.3](#13-adding-a-pr
 ### 3.3 What is written into the G-code
 
 When the slice is done, the **WM Tool Map** window opens (title *WM Device: tool mapping*). For each filament of the file it lists the four toolheads with their colour and material.
+
+<img src="docs/img/tool-mapping-window.png" alt="WM Device: tool mapping window with four filaments and four toolheads" width="760">
+
+The window shows the file name, the number of filaments and the printer it reads the toolheads from. Each row is one filament of the file (colour and material); the four buttons are the toolheads of the printer (T0 to T3, with their loaded colour and material). The highlighted button is the toolhead that filament will print on, and **MATCH** on the right means the colour and material agree. The links at the top: **Auto-match** picks the best toolhead for each filament, **Sync printer filament** reads the toolheads again, **Saved mappings** reuses a map you saved before.
+
+It opens right after slicing, on top of the Preview, so you can see the sliced model and the file's filament list behind it:
+
+<img src="docs/img/tool-mapping-in-orca.png" alt="OrcaSlicer Preview with the WM Device tool mapping window open after slicing" width="900">
 
 | Button | What happens |
 |---|---|
