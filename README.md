@@ -30,7 +30,7 @@ Details:
 ## Quick start
 
 1. **Download** [`wm_device.py`](wm_device.py) from this repository (one file, nothing else to install).
-2. **Install it in OrcaSlicer 2.5.2:** open the **Plugins** window, install the file and tick **Activate**. Approve the one permission dialog. Details in [1.1](#11-install-the-plugin).
+2. **Install it in OrcaSlicer 2.5.2:** **File > Plugins > Install local plugin**, pick the file and tick **Activate**. Approve the one permission dialog. Details with pictures in [1.1](#11-install-the-plugin).
 3. **Open the WM Device tab**, type the address of your printer and press **Connect**. A printer the plugin has never seen needs **one Orca restart** to be approved, see [1.3](#13-adding-a-printer).
 4. **Optional, for the tool map:** in your process profile choose **WM Tool Map** under **Process > Others > Slicing Pipeline Plugin**. After slicing, a window asks which toolhead prints which filament. See [3](#3-process-settings-the-wm-tool-map-step).
 
@@ -74,17 +74,35 @@ This is a community project, not made or supported by WonderMaker or by the Orca
 
 You need **OrcaSlicer 2.5.2** (the version with the plugin system). The plugin is a single file.
 
-1. Download [`wm_device.py`](wm_device.py).
-2. In OrcaSlicer open the **Plugins** window and install the file. Orca keeps its plugins in a folder of its own (on macOS: `~/Library/Application Support/OrcaSlicer/orca_plugins/`).
-3. Tick **Activate** for **WM Device**.
-4. **Approve the permission dialog** that Orca shows once (see [1.2](#12-the-permission-dialog)).
-5. A new tab called **WM Device** appears next to Prepare, Preview, Device and Project.
+**Where to find it:** plugins are managed in OrcaSlicer's **Plugins** section. Open it from the menu bar: **File > Plugins**.
 
-**Updating:** install the new `wm_device.py` **over the old one** (overwrite). Do not remove the plugin first: the list of your printers is kept in the plugin's data folder and a removal can erase it. To avoid a pile of dialogs, untick **Activate**, overwrite, tick **Activate** again.
+<img src="docs/img/orca-file-menu-plugins.png" alt="OrcaSlicer File menu with Plugins at the bottom" width="260">
+
+The **Plugins** window lists every plugin with its **Activate** tick, name, version, source and status. At the bottom it has the tabs **Plugin Info**, **Description**, **Config**, **Permissions**, **Changelog** and **Diagnostics** for the plugin you select. The **Install local plugin** button (top right) installs a plugin from a file on your computer.
+
+<img src="docs/img/orca-plugins-window.png" alt="OrcaSlicer Plugins window with WM Device activated" width="640">
+
+Step by step:
+
+1. Download [`wm_device.py`](wm_device.py).
+2. In OrcaSlicer choose **File > Plugins**.
+3. Press **Install local plugin**, pick `wm_device.py` in the file window and press **Open**. Orca keeps its plugins in a folder of its own (on macOS: `~/Library/Application Support/OrcaSlicer/orca_plugins/`).
+4. If a version is already installed, Orca asks **Overwrite Plugin**. Press **Overwrite**.
+
+   <img src="docs/img/orca-overwrite-dialog.png" alt="Overwrite Plugin question" width="260">
+5. Tick **Activate** for **WM Device**. The status changes to **Loading** and then **Activated**.
+6. **Approve the permission dialog** that Orca shows (press **Yes**, see [1.2](#12-the-permission-dialog)).
+7. A new tab called **WM Device** appears next to Prepare, Preview, Device and Project. The plugin version is shown at the bottom of its left menu.
+
+**Updating:** install the new `wm_device.py` **over the old one** (overwrite). Do not remove the plugin first: the list of your printers is kept in the plugin's data folder and a removal can erase it. To avoid a pile of dialogs, untick **Activate**, press **Install local plugin**, pick the new file, press **Overwrite**, then tick **Activate** again.
 
 ### 1.2 The permission dialog
 
-Orca asks before a plugin may use the network and start background work. The plugin asks **once, while it loads**, for:
+Orca asks before a plugin may use the network and start background work. The plugin asks **once, while it loads**, in a single **Plugin permissions** window (the address below is only an example; you see your own printers):
+
+<img src="docs/img/orca-permission-dialog.png" alt="Plugin permissions dialog asking for network access and a thread" width="640">
+
+It asks for:
 
 - network access to each printer address you have used,
 - background threads (it reads the printer every 2 seconds).
@@ -104,6 +122,10 @@ Orca compares addresses exactly, there are no wildcards, so every printer must b
 The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7125` for you.
 
 ## 2. The Device tab
+
+<img src="docs/img/device-tab.png" alt="WM Device tab in OrcaSlicer: camera, progress, toolheads, control and move panels" width="900">
+
+*The Status page of the WM Device tab (printer addresses covered).*
 
 ### 2.1 The pages
 
@@ -222,6 +244,7 @@ If you ask for help, give the plugin version (shown at the bottom of the tab's l
 |---|---|
 | `wm_device.py` | The plugin: the whole Device tab and the WM Tool Map step in one file |
 | `README.md` | This page |
+| `docs/img/` | The pictures used in this README |
 | `CHANGELOG.md` | What changed in each version |
 | `LICENSE` | GNU General Public License v3 |
 
