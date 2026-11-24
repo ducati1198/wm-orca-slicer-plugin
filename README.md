@@ -4,6 +4,8 @@
 
 **A Device tab and a tool mapping step for OrcaSlicer 2.5.2: watch and control your WonderMaker (Moonraker) printer, and choose which toolhead prints which filament of the file.**
 
+**Works with the factory Klipper and the factory app: you do not need to change anything on your printer.** The plugin only talks to the printer's Moonraker, so it runs next to the factory Klipper and the factory screen app as they are. Nothing is installed on the printer. (Connecting and live status are checked on a factory printer; a full multi-colour print on factory firmware is still being tested.)
+
 **Related projects:** [WM_Ultra_Vanilla_Klipper](https://github.com/ducati1198/WM_Ultra_Vanilla_Klipper) (Raspberry Pi with upstream Klipper) · [wm-ultra-fluidd-acepro-panel](https://github.com/ducati1198/wm-ultra-fluidd-acepro-panel) (Fluidd Toolheads card and ACE Pro) · [wm-vanilla-klipper-factory](https://github.com/ducati1198/wm-vanilla-klipper-factory) (factory printer)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE) ![OrcaSlicer 2.5.2](https://img.shields.io/badge/OrcaSlicer-2.5.2-green) ![Tested on macOS](https://img.shields.io/badge/tested%20on-macOS-lightgrey)
