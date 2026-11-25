@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.2
+- **Description box in the tool mapping windows:** above the buttons, one line explains what each button does (Apply mapping, Skip mapping, Cancel in the slicing window; Apply and print, Print without map, Cancel in the Print window). The windows are a little taller to fit it.
+
 ## 0.29.1
 - Timelapse page: the **Open in browser** button is now called **Download** (same action: your browser opens or saves the video).
 - The video player now fits the picture, so the black bars on both sides are gone; the picture keeps the same size. The Status page camera does the same and is a little bigger (480 px tall, still 16:9).

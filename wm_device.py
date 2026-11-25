@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.29.1"
+# version = "0.29.2"
 # ///
 """WM Device v0.6.
 
@@ -711,7 +711,7 @@ class Poller:
                 heads, cur, _ = fetch_heads(self.base)
                 page = file_popup_html(fils, heads, cur, filename, host, note, mem_load(key))
                 self.post({"type": "result", "ok": True, "text": "mapping window opened for " + os.path.basename(filename)})
-                res = ui_dialog(orca.host.ui, page, "WM Device: print with tool mapping", 860, 640)
+                res = ui_dialog(orca.host.ui, page, "WM Device: print with tool mapping", 860, 720)
                 act = (res or {}).get("action")
                 if act == "sync":
                     note = "Synced from the printer"
@@ -1286,7 +1286,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.1</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.2</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1871,6 +1871,7 @@ body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:0;background:#1
 .st{width:66px;flex:none;font-weight:700;font-size:13px;text-align:right}
 .mw.bad{background:#5a1f22;color:#ff9a9a;border:1px solid #c0392b;font-weight:700}
 .mw{background:#4a3b1c;color:#f0c060;padding:9px 12px;border-radius:6px;font-size:13px;margin:6px 20px}
+#desc{margin:0 20px 8px;padding:10px 12px;border:1px solid #353a40;border-radius:10px;background:#23272c;line-height:1.65;font-size:13px;color:#9aa4ad}#desc b{color:#e6e9ec;font-weight:600}#desc b.g{color:#5ec27a}
 #foot{display:flex;gap:10px;padding:14px 20px;border-top:1px solid #353a40;align-items:center;margin-top:8px}
 #foot span{flex:1;color:#9aa4ad;font-size:12px}
 button.b{padding:11px 20px;border:0;border-radius:7px;font-size:15px;font-weight:700;color:#fff;cursor:pointer;background:#3b4046}
@@ -1880,6 +1881,7 @@ button.up{background:#2a6fb5}button.pr{background:#1fa150}
 <div id="tools"><button class="lnk" onclick="auto()">AUTO-MATCH</button><button class="lnk" onclick="done('sync')">SYNC PRINTER FILAMENT</button>
 <button class="lnk" onclick="svt()">SAVED MAPPINGS &#9662;</button><div id="sv"></div></div>
 <div id="rows"></div><div id="warn"></div>
+<div id="desc"><div><b>Cancel</b> sends nothing.</div><div><b>Upload</b> sends the file with your choice written into it. It does not print.</div><div><b class="g">Upload and Print</b> sends the file with your choice and starts the print.</div></div>
 <div id="foot"><span id="note"></span><button class="b" onclick="done('cancel')">Cancel</button><button class="b up" onclick="done('upload')">Upload</button><button class="b pr" onclick="done('print')">Upload and Print</button></div>
 <script>
 var D=__DATA__,PALN=__PAL__,MAP=D.map.slice(0,4);
@@ -1995,12 +1997,20 @@ def ui_dialog(ui, html, title, width, height, timeout=900):
 
 
 
+def _swap_desc(h, inner):
+    """Replace the text of the description box above the buttons of a mapping window."""
+    a = h.index('<div id="desc">') + len('<div id="desc">')
+    b = h.index('</div>\n<div id="foot">')
+    return h[:a] + inner + h[b:]
+
+
 def slice_popup_html(fils, heads, cur, filename, host, note="", remembered=None):
     h = popup_html(fils, heads, cur, filename, host, note, remembered)
     h = h.replace("Send to printer: choose toolheads", "Sliced: choose toolheads for this print")
     h = h.replace('<button class="b pr" onclick="done(\'print\')">Upload and Print</button>', "")
     h = h.replace(">Upload</button>", ">Apply mapping</button>")
     h = h.replace("<button class=\"b up\"", "<button class=\"b\" onclick=\"done('skip')\">Skip mapping</button><button class=\"b up\"", 1)
+    h = _swap_desc(h, '<div><b class="g">Apply mapping</b> writes this choice into the G-code and remembers it for this project.</div><div><b>Skip mapping</b> leaves the G-code as it is. Nothing is written or remembered.</div><div><b>Cancel</b> makes the file empty so it cannot be printed. Slice again.</div>')
     return h
 
 
@@ -2010,6 +2020,7 @@ def file_popup_html(fils, heads, cur, filename, host, note="", remembered=None):
     h = h.replace('<button class="b up" onclick="done(\'upload\')">Upload</button>', "")
     h = h.replace(">Upload and Print</button>", ">Apply and print</button>")
     h = h.replace('<button class="b" onclick="done(\'cancel\')">Cancel</button>', '<button class="b" onclick="done(\'cancel\')">Cancel</button><button class="b" onclick="done(\'skip\')">Print without map</button>', 1)
+    h = _swap_desc(h, '<div><b class="g">Apply and print</b> sets this choice on the printer, remembers it for this file and starts the print.</div><div><b>Print without map</b> starts the print and leaves the printer\'s tool map as it is.</div><div><b>Cancel</b> sends nothing.</div>')
     return h
 
 
@@ -2052,7 +2063,7 @@ def ask_tool_map(path, name, ui=None):
         _trace("building popup html")
         page = slice_popup_html(fils, heads, cur, name, base.replace("http://", "").replace(":7125", ""), note, mem)
         _trace("popup html built")
-        res = ui_dialog(ui, page, "WM Device: tool mapping", 860, 640)
+        res = ui_dialog(ui, page, "WM Device: tool mapping", 860, 720)
         _trace("dialog returned " + str((res or {}).get("action")))
         act = (res or {}).get("action")
         if act == "sync":

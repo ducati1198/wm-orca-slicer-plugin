@@ -50,6 +50,7 @@ Details:
 | ACE Pro panel | Shown only when the printer has an ACE Pro: slots, drying, endless spool |
 | **WM Tool Map** slicing step | After slicing, shows the filaments of the file and the four toolheads, and writes your choice into the G-code |
 | **Remembered map and material warning** | The tool map is remembered per project and filled in next time; a red warning shows when a filament does not match the loaded spool |
+| **Button descriptions in the mapping windows** | A box above the buttons of every tool mapping window says in one line what each button does (Apply mapping, Skip mapping, Cancel, Apply and print, Print without map) |
 | **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
 | **History with pictures** | Last 25 prints with picture, filament colours, weight and result, a totals bar, **Print again** (opens the tool mapping window with your remembered map) and tick boxes with **Delete** for the list entries |
