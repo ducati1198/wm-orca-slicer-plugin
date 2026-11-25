@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.27.0"
+# version = "0.28.0"
 # ///
 """WM Device v0.6.
 
@@ -31,7 +31,7 @@ EXTRUDERS = ["extruder", "extruder1", "extruder2", "extruder3"]
 WANT = ["print_stats", "display_status", "virtual_sdcard", "heater_bed", "heater_generic chamber", "toolhead",
         "fan", "fan_generic auxiliary_fan", "fan_generic air_fan", "idle_timeout", "gcode_move", "webhooks",
         "ace", "save_variables", "output_pin ACE_Pro", "output_pin ACE_Auto_Load", "gcode_macro _WM_ACE",
-        "gcode_macro _WM_ENDLESS", "gcode_macro _WM_ENDLESS_CONTINUE", "gcode_macro WM_CHAMBER_LIGHT",
+        "gcode_macro _WM_ENDLESS", "gcode_macro _WM_ENDLESS_CONTINUE", "gcode_macro WM_CHAMBER_LIGHT", "gcode_macro WM_UNLOAD_MENU",
         "gcode_macro _ZR_SET_TOOL_INFO"] + [f"ace_instance_{i}" for i in range(4)] + EXTRUDERS + [f"filament_switch_sensor {n}{i}" for n in ("filament", "docked") for i in range(HEADS)]
 
 # Same lists as the ZR Tools screen / Spool and Toolhead Mapper plugin
@@ -80,8 +80,8 @@ def base_url(text):
     return "http://" + (t if ":" in t else t + ":7125")
 
 
-def http_json(url, post=False, timeout=None):
-    req = urllib.request.Request(url, data=b"" if post else None, method="POST" if post else "GET",
+def http_json(url, post=False, timeout=None, method=None):
+    req = urllib.request.Request(url, data=b"" if post else None, method="POST" if post else (method or "GET"),
                                  headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout or TIMEOUT_S) as r:
         return json.loads(r.read().decode("utf-8", "replace") or "{}")
@@ -489,6 +489,10 @@ class Poller:
         self.fails = 0
         self.kstate = ""
         self.last = {}
+        self.pseen = None
+        self.pr = None
+        self.pgrp = 0
+        self.pallow = set()
         self.ping = 0.0
 
     def shutdown(self):
@@ -552,6 +556,10 @@ class Poller:
                 self.kstate = (status.get("webhooks") or {}).get("state", "")
                 self.post({"type": "state", "base": base, "status": status, "time": time.time(), "cams": self.cams,
                            "slots": merge_saved(self.slots, status), "messages": self.messages})
+                try:
+                    self.scan_prompts(base)
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception as exc:  # noqa: BLE001
                 self.objects = None
                 self.fails += 1
@@ -568,6 +576,76 @@ class Poller:
             threading.Thread(target=self.file_meta, daemon=True, args=([r["path"] for r in rows],)).start()
         except Exception as exc:  # noqa: BLE001
             self.post({"type": "result", "ok": False, "text": "file list: " + repr(exc)})
+
+    def scan_prompts(self, base):
+        """Printer prompt windows (RESPOND action:prompt_*) come through the console; the page draws them like Fluidd does."""
+        store = http_json(base + "/server/gcode_store?count=40", timeout=4)["result"]["gcode_store"]
+        keys = [(m.get("time"), m.get("message", "")) for m in store]
+        if self.pseen is None:
+            self.pseen = set(keys)      # do not replay old prompts
+            return
+        new = [k for k in keys if k not in self.pseen]
+        self.pseen = set(keys)
+        for _t, msg in new:
+            m = re.search(r"action:prompt_(\w+)\s*(.*)$", msg)
+            if not m:
+                continue
+            cmd, arg = m.group(1), m.group(2).strip()
+            if cmd == "begin":
+                self.pr, self.pgrp = {"title": arg[:80], "items": []}, 0
+            elif self.pr is None and cmd != "end":
+                continue
+            elif cmd == "text":
+                self.pr["items"].append({"t": "text", "text": arg[:400]})
+            elif cmd == "button_group_start":
+                self.pgrp += 1
+            elif cmd == "button_group_end":
+                self.pgrp += 1
+            elif cmd in ("button", "footer_button"):
+                parts = arg.split("|")
+                label = parts[0][:60]
+                script = parts[1].strip() if len(parts) > 1 else ""
+                color = parts[2].strip() if len(parts) > 2 else "secondary"
+                self.pr["items"].append({"t": "btn", "label": label, "script": script, "color": color,
+                                         "grp": self.pgrp if cmd == "button" else -1})
+            elif cmd == "show":
+                self.pallow = set(i["script"] for i in self.pr["items"] if i["t"] == "btn" and i["script"])
+                self.post({"type": "prompt", "prompt": self.pr})
+            elif cmd == "end":
+                self.pr, self.pallow = None, set()
+                self.post({"type": "prompt", "close": True})
+
+    def prompt_click(self, script):
+        script = str(script or "")
+        self.post({"type": "prompt", "close": True})
+        if not script:
+            return
+        if script not in self.pallow:
+            self.post({"type": "result", "ok": False, "text": "that button is not from the printer's window"})
+            return
+        try:
+            http_json(self.base + "/printer/gcode/script?script=" + urllib.parse.quote(script, safe=""), post=True, timeout=240)
+            self.post({"type": "result", "ok": True, "text": "sent: " + script[:60]})
+        except Exception as exc:  # noqa: BLE001
+            self.post({"type": "result", "ok": False, "text": script[:40] + ": " + repr(exc)[:120]})
+
+    def delete_files(self, paths):
+        ok, errs = 0, []
+        for p in paths:
+            p = str(p or "").strip().lstrip("/")
+            if not p or ".." in p.split("/") or "\\" in p:
+                errs.append("skipped a bad file name")
+                continue
+            try:
+                http_json(self.base + "/server/files/gcodes/" + urllib.parse.quote(p, safe="/"), method="DELETE", timeout=15)
+                ok += 1
+            except Exception as exc:  # noqa: BLE001
+                errs.append(p + ": " + repr(exc)[:90])
+        text = "deleted %d file%s" % (ok, "" if ok == 1 else "s")
+        if errs:
+            text += "; not deleted: " + "; ".join(errs[:3])
+        self.post({"type": "result", "ok": not errs, "text": text})
+        self.files()
 
     def file_meta(self, paths):
         """Part picture, filament colours and weight of each listed file (read only, from Moonraker's file data)."""
@@ -722,6 +800,10 @@ class Poller:
                 if state in ("printing", "paused"):
                     raise ValueError("not while printing")
                 script, text = "M84", "motors off"
+            elif kind == "unloadmenu":
+                if state == "printing":
+                    raise ValueError("not while printing (allowed when paused)")
+                script, text = "WM_UNLOAD_MENU", "Unload Menu opened on the printer"
             elif kind == "cooldown":
                 script, text = "TURN_OFF_HEATERS", "all heaters off"
             elif kind == "light":
@@ -819,10 +901,12 @@ class Poller:
             else:
                 raise ValueError("unknown control")
             # Moonraker answers a gcode POST only when the command has finished, so homing and moves need minutes.
-            tmo = 240 if kind in ("home", "homez", "move", "extrude", "endless_go") else 20
+            tmo = 240 if kind in ("home", "homez", "move", "extrude", "endless_go", "unloadmenu") else 20
             note = ""
             if kind == "light" and "gcode_macro WM_CHAMBER_LIGHT" not in (self.last or {}):
                 raise ValueError("this printer has no WM_CHAMBER_LIGHT macro (factory firmware): use the printer's own light switch")
+            if kind == "unloadmenu" and "gcode_macro WM_UNLOAD_MENU" not in (self.last or {}):
+                raise ValueError("this printer has no WM_UNLOAD_MENU macro (factory firmware)")
             try:
                 if kind == "spool" and "gcode_macro _ZR_SET_TOOL_INFO" not in (self.last or {}):
                     script = ""    # factory printer: no _ZR_SET_TOOL_INFO macro, only the screen's tmt1.ini is updated below
@@ -1085,6 +1169,7 @@ button.lnk{border:0;background:transparent;color:#4aa3ff;font-weight:600;letter-
 .fdots{display:flex;gap:5px;margin-top:5px}
 .fdot{width:13px;height:13px;border-radius:50%;border:1px solid rgba(255,255,255,.25)}
 .frow button{min-width:74px}
+.fchk{width:22px;height:22px;flex:none;cursor:pointer;accent-color:#c0392b}
 .fil2{grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:10px}.fil2>.panel{margin-bottom:0}
 /* v0.26 themes: Style button cycles Current / A bento graphite / B soft slate */
 body[data-th="a"]{--orca-bg:#0e1013;--orca-fg:#e8eaed;--orca-muted:#8b93a1;--orca-border:#262a33;--g:#2dd4a7;--panel:#14171c;--hd:#1b1f26;--card:#171a20;--card2:#1d2128;--shadow:none;--key:#1f232b;--keyh:#2a2f39;--keyb:#323744;--keyt:#e8eaed;--keyin:#12151a}
@@ -1103,12 +1188,13 @@ body[data-th="b"] .tcell,body[data-th="b"] .slot,body[data-th="b"] .acecard{bord
 body[data-th="b"] button.pri,body[data-th="b"] .s-printing,body[data-th="b"] .seg span.on,body[data-th="b"] .chip.on,body[data-th="b"] .stp .go,body[data-th="b"] .b-ok{color:#2b1700}
 body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 </style></head><body>
+<div id="pmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;align-items:center;justify-content:center"><div id="pbox" style="background:var(--card2,#1d2128);border:1px solid var(--keyb);border-radius:14px;padding:18px 20px;width:500px;max-width:92vw;max-height:90vh;overflow:auto"></div></div>
 <div id="nav"><div id="navName"><span class="dot off" id="navDot"></span><span id="navTxt">WM Device</span></div>
 <div class="ni sel" id="n-status" onclick="showTab('status')">Status</div>
 <div class="ni" id="n-files" onclick="showTab('files')">Files</div>
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.27.0</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.28.0</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1167,7 +1253,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div style="border-top:1px solid var(--orca-border);margin:10px 0 6px"></div>
 <div class="kv"><span>Part fan</span><span id="f0">-</span></div><div class="kv"><span>Auxiliary fan</span><span id="f1">-</span></div><div class="kv"><span>Air filter</span><span id="f2">-</span></div><div class="kv"><span>Speed factor</span><span id="spd">-</span></div></div></div>
 <div class="panel"><div class="ph"><span>Move</span></div><div class="pb" id="moveBody"><div class="mvbox">
-<svg class="dial" width="176" height="176" viewBox="0 0 170 170" role="img"><title>X and Y jog dial</title>
+<svg class="dial" width="224" height="224" viewBox="0 0 170 170" role="img"><title>X and Y jog dial</title>
 <circle cx="85" cy="85" r="83" fill="none" stroke="var(--keyb)" stroke-width="1.5"/>
 <path class="w" d="M85 85 L28 28 A80 80 0 0 1 142 28 Z" onclick="mv('y',1)"/>
 <path class="w" d="M85 85 L142 28 A80 80 0 0 1 142 142 Z" onclick="mv('x',1)"/>
@@ -1175,9 +1261,9 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <path class="w" d="M85 85 L28 142 A80 80 0 0 1 28 28 Z" onclick="mv('x',-1)"/>
 <circle class="c" cx="85" cy="85" r="26" onclick="doAct({kind:'home'},'Home all axes? The toolhead will move.')"/>
 <text x="85" y="33" text-anchor="middle">Y+</text><text x="143" y="90" text-anchor="middle">X+</text><text x="85" y="152" text-anchor="middle">Y-</text><text x="27" y="90" text-anchor="middle">X-</text><text x="85" y="90" text-anchor="middle" style="fill:#fff;font-size:12px">Home</text></svg>
-<div><div class="mvcap">Z axis</div><div class="mvcol"><div class="k" onclick="mv('z',1)" style="height:52px">&#9650; Z+</div><div class="k" onclick="mv('z',-1)" style="height:52px">&#9660; Z-</div></div></div>
+<div style="position:relative"><div class="mvcap" style="position:absolute;top:-20px;left:0;right:0;margin:0">Z axis</div><div class="mvcol" style="height:224px;grid-template-rows:1fr 1fr"><div class="k" onclick="mv('z',1)" style="height:auto;min-width:64px">&#9650; Z+</div><div class="k" onclick="mv('z',-1)" style="height:auto;min-width:64px">&#9660; Z-</div></div></div>
 
-<div><div class="mvcap">Step (mm)</div><div class="seg" id="mvStep"><span onclick="setStep(1)">1</span><span class="on" onclick="setStep(10)">10</span><span onclick="setStep(50)">50</span></div><div class="k" id="btnLight" onclick="act({kind:'light'})" style="margin-top:12px">Light</div><div class="k" onclick="doAct({kind:'homez'},'Home Z? The toolhead will move.')" style="margin-top:8px">Home Z</div><div class="k" onclick="doAct({kind:'motoroff'},'Motors off?')" style="margin-top:8px">Motors off</div></div>
+<div><div class="mvcap">Step (mm)</div><div class="seg" id="mvStep"><span onclick="setStep(1)">1</span><span class="on" onclick="setStep(10)">10</span><span onclick="setStep(50)">50</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px"><div class="k" id="btnLight" onclick="act({kind:'light'})">Light</div><div class="k" onclick="doAct({kind:'homez'},'Home Z? The toolhead will move.')">Home Z</div><div class="k" onclick="doAct({kind:'motoroff'},'Motors off?')">Motors off</div><div class="k" id="btnUnload" onclick="act({kind:'unloadmenu'})" style="background:var(--g);border-color:var(--g);color:#fff">Unload Menu</div></div></div>
 </div><div class="muted" style="margin-top:10px">Moves apply at once. Not while printing. Z+ and Z- are the printer's Z coordinate.</div><div class="pm"><div><small>X / Y / Z</small><span id="pos">-</span></div><div><small>Homed</small><span id="homed">-</span></div><div><small>Idle timeout</small><span id="idle">-</span></div><div><small>Extrusion factor</small><span id="ext">-</span></div></div></div></div>
 <div class="panel"><div class="ph">Controls</div><div class="pb cx cxrow">
 <div class="cxc"><div class="cxl">Temperature</div>
@@ -1209,7 +1295,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 </div></div>
 </div>
 
-<div id="v-files" style="display:none"><div class="panel"><div class="ph">Files <span class="sp"></span><button onclick="loadFiles()">Refresh list</button></div><div class="pb"><div id="files" class="muted">press Refresh list</div></div></div></div>
+<div id="v-files" style="display:none"><div class="panel"><div class="ph">Files <span class="sp"></span><button onclick="loadFiles()">Refresh list</button> <button id="delBtn" onclick="askDelete()" style="background:#c0392b;border-color:#c0392b;color:#fff">Delete</button></div><div class="pb"><div id="delbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="files" class="muted">press Refresh list</div></div></div></div>
 <div id="v-hist" style="display:none"><div class="panel"><div class="ph">Print history <span class="sp"></span><button onclick="loadHist()">Refresh</button></div><div class="pb"><div id="hist" class="muted">loading...</div></div></div></div>
 <div id="v-msgs" style="display:none"><div class="panel"><div class="ph">Messages and errors</div><div class="pb"><div id="msgs" class="muted">-</div></div></div></div>
 <div class="muted" id="upd" style="margin-top:10px"></div>
@@ -1309,15 +1395,36 @@ function ask(cmd){
 function send(cmd,file){$("res").className="muted";$("res").textContent="sending "+cmd+"...";orca.postMessage({type:"command",name:cmd,file:file||""})}
 function loadFiles(){$("files").textContent="loading...";orca.postMessage({type:"files"})}
 function printFile(f){$("res").className="muted";$("res").textContent="opening the mapping window...";orca.postMessage({type:"printfile",file:f})}
-var FROWS=[],FMETA={};
+var FROWS=[],FMETA={},SEL={};
 function fmtDur(t){var h=Math.floor(t/3600),m=Math.round((t%3600)/60);return (h?h+"h ":"")+m+"m"}
 function renderFiles(){var h="";FROWS.forEach(function(f){var mt=FMETA[f.path]||{};var d=new Date(f.modified*1000).toLocaleDateString()+" · "+(f.size/1048576).toFixed(1)+" MB";
   if(mt.h)d+=" · "+fmtDur(mt.h);if(mt.g)d+=" · "+Math.round(mt.g)+" g";
   var th=mt.th?'<img class="fth" src="'+esc(mt.th)+'" onerror="this.style.visibility=\'hidden\'">':'<div class="fth"></div>';
   var dots=(mt.c||[]).map(function(c,i){var u=!mt.u||mt.u[i];return '<span style="display:inline-flex'+(u?"":";opacity:.3")+'">'+spool(c,20)+'</span>'}).join("");
-  h+='<div class="frow">'+th+'<div class="fmid"><div class="fname">'+esc(f.path)+'</div><div class="muted">'+d+'</div><div class="fdots">'+dots+'</div></div><button class="pri" '+((STATE==="printing"||STATE==="paused")?"disabled":"")+' data-f="'+esc(f.path)+'">Print</button></div>'});
+  h+='<div class="frow"><input type="checkbox" class="fchk" data-c="'+esc(f.path)+'" '+(SEL[f.path]?"checked":"")+'>'+th+'<div class="fmid"><div class="fname">'+esc(f.path)+'</div><div class="muted">'+d+'</div><div class="fdots">'+dots+'</div></div><button class="pri" '+((STATE==="printing"||STATE==="paused")?"disabled":"")+' data-f="'+esc(f.path)+'">Print</button></div>'});
   $("files").innerHTML=h||"no files in gcodes";
-  Array.prototype.forEach.call($("files").querySelectorAll("button"),function(b){b.onclick=function(){printFile(b.getAttribute("data-f"))}})}
+  Array.prototype.forEach.call($("files").querySelectorAll("button"),function(b){b.onclick=function(){printFile(b.getAttribute("data-f"))}});
+  Array.prototype.forEach.call($("files").querySelectorAll(".fchk"),function(c){c.onchange=function(){var k=c.getAttribute("data-c");if(c.checked)SEL[k]=1;else delete SEL[k];updDel()}});
+  var keep={};FROWS.forEach(function(f){if(SEL[f.path])keep[f.path]=1});SEL=keep;updDel()}
+function showPrompt(p){var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:18px;font-weight:700">'+esc(p.title||"Printer")+'</span><span style="cursor:pointer;font-size:20px;color:var(--orca-muted)" onclick="$(\'pmodal\').style.display=\'none\'">&times;</span></div>',row=[],last=-2,foot="";
+  function flush(){if(row.length){h+='<div style="display:flex;gap:10px;margin-bottom:10px">'+row.join("")+'</div>';row=[]}}
+  (p.items||[]).forEach(function(it,ix){
+    if(it.t==="text"){flush();h+='<div style="font-size:15px;font-weight:600;line-height:1.5;margin:0 0 14px">'+esc(it.text)+'</div>';return}
+    var bg=it.color==="primary"?"var(--g)":(it.color==="error"||it.color==="warning")?"#c0392b":"var(--key)",fg=it.color==="primary"||it.color==="error"||it.color==="warning"?"#fff":"var(--keyt)";
+    var b='<button data-px="'+ix+'" style="flex:1;padding:14px 8px;font-size:15px;font-weight:700;border-radius:10px;background:'+bg+';color:'+fg+'">'+esc(it.label)+'</button>';
+    if(it.grp===-1){foot+=b;return}
+    if(it.grp!==last){flush();last=it.grp}row.push(b)});
+  flush();if(foot)h+='<div style="display:flex;gap:10px">'+foot+'</div>';
+  var box=$("pbox");box.innerHTML=h;$("pmodal").style.display="flex";
+  Array.prototype.forEach.call(box.querySelectorAll("button[data-px]"),function(b){b.onclick=function(){var it=p.items[b.getAttribute("data-px")];$("pmodal").style.display="none";orca.postMessage({type:"promptbtn",script:it.script||""})}})}
+function selList(){return Object.keys(SEL)}
+function updDel(){var n=selList().length;$("delBtn").textContent=n?"Delete ("+n+")":"Delete"}
+function askDelete(){var l=selList(),r=$("res");if(!l.length){r.className="err";r.textContent="Tick the box next to the picture of each file you want to delete first.";return}
+  if(STATE==="printing"||STATE==="paused"){r.className="err";r.textContent="Files cannot be deleted while a print is running.";return}
+  var nm=l.slice(0,5).map(function(x){return esc(x)}).join("<br>")+(l.length>5?"<br>and "+(l.length-5)+" more":"");
+  var b=$("delbar");b.style.display="block";b.innerHTML='<div style="font-weight:700;margin-bottom:6px">Delete '+l.length+' file'+(l.length>1?"s":"")+' from the printer? This cannot be undone.</div><div class="muted" style="margin-bottom:10px">'+nm+'</div><button id="delYes" style="background:#c0392b;border-color:#c0392b;color:#fff">Yes, delete</button> <button id="delNo">Cancel</button>';
+  $("delNo").onclick=function(){b.style.display="none"};
+  $("delYes").onclick=function(){var x=selList();SEL={};b.style.display="none";updDel();$("res").className="muted";$("res").textContent="deleting...";orca.postMessage({type:"deletefiles",files:x})}}
 function ink(c){var m=/^#?([0-9a-f]{6})$/i.exec(c||"");if(!m)return "#fff";var n=parseInt(m[1],16),r=n>>16,g=(n>>8)&255,b=n&255;return (0.299*r+0.587*g+0.114*b)>150?"#111":"#fff"}
 function wedge(a0,a1,r1,r2){function q(r,a){return (r*Math.cos(a)).toFixed(2)+" "+(r*Math.sin(a)).toFixed(2)}return "M"+q(r2,a0)+" A"+r2+" "+r2+" 0 0 1 "+q(r2,a1)+" L"+q(r1,a1)+" A"+r1+" "+r1+" 0 0 0 "+q(r1,a0)+" Z"}
 function spool(c,z){c=esc(c||"#808080");z=z||20;var k="rgba(0,0,0,.6)",s='<svg viewBox="-50 -50 100 100" width="'+z+'" height="'+z+'" style="flex:none;vertical-align:middle"><circle r="47" fill="'+c+'" stroke="'+k+'" stroke-width="4"/>';for(var i=0;i<6;i++){var m=i*Math.PI/3-Math.PI/2;s+='<path d="'+wedge(m-.36,m+.36,20,38)+'" fill="#1b1d20" stroke="'+k+'" stroke-width="3" stroke-linejoin="round"/>'}return s+'<circle r="13" fill="'+c+'" stroke="'+k+'" stroke-width="4"/><circle r="6" fill="#1b1d20" stroke="'+k+'" stroke-width="2"/></svg>'}
@@ -1350,7 +1457,7 @@ function setSw(id,key,v,dis){var e=$(id);if(!e)return;if(!SWT[key]||Date.now()-S
 function renderFil(s,sl){
   var vars=((s.save_variables||{}).variables)||{};
   var busy=(STATE==="printing"||STATE==="paused");
-  var bl=$("btnLight");if(bl)bl.style.display=s["gcode_macro WM_CHAMBER_LIGHT"]?"":"none";
+  var bu=$("btnUnload");if(bu)bu.style.display=s["gcode_macro WM_UNLOAD_MENU"]?"":"none";var bl=$("btnLight");if(bl)bl.style.display=s["gcode_macro WM_CHAMBER_LIGHT"]?"":"none";
   var hasAce=!!(s["gcode_macro _WM_ACE"]||s.ace||s.ace_instance_0);
   var pro=s["output_pin ACE_Pro"],aut=s["output_pin ACE_Auto_Load"];
   var box=$("aceSw");box.style.display=(hasAce&&(pro||aut))?"block":"none";
@@ -1492,6 +1599,7 @@ orca.onMessage(function(m){
   if(m.type==="orcafils"){FILS=m.fils||[];FILERR=m.err||"";if(LS&&LS.print_stats)renderFil(LS,SLOTS)}
   if(m.type==="approve"){$("err").textContent="New printer "+m.host+": Orca approves a printer address only while the plugin loads. It is saved now. Close Orca and open it again, approve the permission dialog for this printer, then press Connect. You only do this once per new printer.";$("conn").textContent="needs approval";return}
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
+  if(m.type==="prompt"){var pm=$("pmodal");if(m.close||!m.prompt){pm.style.display="none"}else{showPrompt(m.prompt)}}
   if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text}
   if(m.type==="history"){var hh="";m.jobs.forEach(function(j){var c=j.status==="completed"?"ok":(j.status==="in_progress"?"muted":"err");
     hh+='<div class="file"><span>'+esc(j.file)+' <span class="muted">'+new Date(j.start*1000).toLocaleString()+' · '+tt(j.dur)+'</span></span><span class="'+c+'">'+esc(j.status)+'</span></div>'});
@@ -2033,6 +2141,11 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                 threading.Thread(target=self.poller.action, daemon=True, args=(message,)).start()
             elif kind == "history":
                 threading.Thread(target=self.poller.history, daemon=True).start()
+            elif kind == "promptbtn":
+                threading.Thread(target=self.poller.prompt_click, daemon=True, args=(str(message.get("script", "")),)).start()
+            elif kind == "deletefiles":
+                names = [str(x) for x in (message.get("files") or [])][:50]
+                threading.Thread(target=self.poller.delete_files, daemon=True, args=(names,)).start()
             elif kind == "files":
                 threading.Thread(target=self.poller.files, daemon=True).start()
             elif kind == "command":

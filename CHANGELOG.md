@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.0
+- **Delete files:** the Files page has a tick box next to each picture and a red **Delete** button next to **Refresh list**. It shows the files, asks "Yes, delete" or Cancel, and is blocked while a print runs.
+- **Unload Menu button** in the Move section (green, next to Light, Home Z and Motors off, now in two columns). It runs the printer's `WM_UNLOAD_MENU` macro, is blocked while printing but allowed when paused, and is hidden on printers that do not have the macro.
+- **Printer popup windows open in the tab:** when a macro shows a prompt window (Fluidd style), the same window opens in the WM Device tab with large bold text. Only buttons the printer sent can be pressed.
+- The Move dial is bigger and the Z+ / Z- buttons match its height.
+
 ## 0.27.0
 - **Spool pictures:** the colour dots are now small filament spools (outer rim, six cut-outs, hub) in the Device tab toolhead and ACE cards, on the Files page and in the Print mapping window. The material name is on the card label.
 - **Printer address is remembered** on Windows too: the last printer is saved in the plugin's data folder and filled in again after Orca restarts (the page asks for it several times while it loads, and the address list is kept in two folders).

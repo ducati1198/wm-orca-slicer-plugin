@@ -52,6 +52,8 @@ Details:
 | **Remembered map and material warning** | The tool map is remembered per project and filled in next time; a red warning shows when a filament does not match the loaded spool |
 | **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
+| **Delete files** | Tick the box next to a file picture and press the red **Delete** next to **Refresh list**; it asks first and is blocked while printing |
+| **Unload Menu and printer popups** | The **Unload Menu** button runs `WM_UNLOAD_MENU`; any popup window a printer macro shows opens in the tab, with its buttons |
 | **Spool pictures** | Filament colours are drawn as small spools (Device cards, Files page, Print mapping window) instead of plain dots |
 | **Remembers your printer** | The last printer address comes back after Orca restarts, also on Windows |
 | **Files page with pictures** | Each file shows a picture of the part, its filament colours and weight. **Print** opens the tool mapping window first, then starts the print |
@@ -164,7 +166,7 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 | Page | What it shows |
 |---|---|
 | **Status** | Camera, print progress with **Pause / Resume / Stop**, the four toolheads (colour, material), Control and Move panels, temperatures, fans, speed, the ACE Pro panel when the printer has one |
-| **Files** | The gcode files on the printer. Start one with **Print** (asks first) |
+| **Files** | The gcode files on the printer. Start one with **Print** (asks first). Tick files and press **Delete** to remove them (asks first) |
 | **History** | The print history with state and time |
 | **Messages** | Errors and warnings of the printer's console, grouped |
 
@@ -179,7 +181,7 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 
 ### 2.3 Move, Controls and spools
 
-- **Move:** the Y/X pad (the centre **Home** circle homes all axes and asks first), the **Z axis** buttons and the step size (1, 10 or 50 mm). Moves apply at once and are blocked while printing. The Z buttons use the printer's Z coordinate.
+- **Move:** the Y/X pad (the centre **Home** circle homes all axes and asks first), the **Z axis** buttons and the step size (1, 10 or 50 mm). Moves apply at once and are blocked while printing. The **Unload Menu** button (only on printers that have the macro) opens the unload window; it works while paused too. The Z buttons use the printer's Z coordinate.
 - **Controls:** a temperature box and **Set** for Tool 1 to 4, the bed and the chamber, fan sliders (part, auxiliary, air filter), the speed factor (50 to 200 %), and **Cool down**.
 - **Spools:** click a spool in the filament card to set the material, nozzle temperature and colour, then **Save to printer**. The plugin saves it with the printer's `_ZR_SET_TOOL_INFO` macro, which the printer's own screens read.
 
