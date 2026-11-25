@@ -1,0 +1,50 @@
+# Publishes a GitHub release when the RELEASE file changes on main.
+#
+# How to use it:
+#   1. Put the release number in RELEASE (for example 1.2.0).
+#   2. Write the notes in docs/release-notes/<number>.md (for example docs/release-notes/1.2.0.md).
+#   3. Push to main.
+#   The workflow creates the tag v<number> and a release with those notes, and attaches wm_device.py.
+#
+# To run it again by hand, open the Actions tab, choose "Release" and press "Run workflow".
+# If the release already exists nothing is changed.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [RELEASE]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the release number and notes
+        id: info
+        run: |
+          VERSION="$(tr -d '[:space:]' < RELEASE)"
+          [ -n "$VERSION" ] || { echo "RELEASE is empty"; exit 1; }
+          [ -s "docs/release-notes/$VERSION.md" ] || { echo "Missing docs/release-notes/$VERSION.md"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.info.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to do."
+            exit 0
+          fi
+          gh release create "$TAG" wm_device.py \
+            --target "${{ github.sha }}" \
+            --title "$TAG" \
+            --notes-file "docs/release-notes/${{ steps.info.outputs.version }}.md" \
+            --latest

@@ -322,6 +322,8 @@ If you ask for help, give the plugin version (shown at the bottom of the tab's l
 | `docs/img/` | The pictures used in this README |
 | `CHANGELOG.md` | What changed in each version |
 | `LICENSE` | GNU General Public License v3 |
+| `.github/workflows/release.yml` | Publishes a GitHub release (tag, notes, `wm_device.py`) when `RELEASE` changes; notes are in `docs/release-notes/` |
+| `RELEASE` | The release number the workflow publishes (now 1.2.0) |
 
 ## 8. Credits and license
 
