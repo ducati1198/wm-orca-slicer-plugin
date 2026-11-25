@@ -159,7 +159,7 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 
 <img src="docs/img/device-tab.png" alt="WM Device tab in OrcaSlicer: camera, progress, toolheads, control and move panels" width="900">
 
-*The Status page of the WM Device tab (printer addresses covered).*
+*The Status page of the WM Device tab, v0.27 (printer addresses covered).*
 
 ### 2.1 The pages
 
@@ -169,6 +169,10 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 | **Files** | The gcode files on the printer. Start one with **Print** (asks first). Tick files and press **Delete** to remove them (asks first) |
 | **History** | The print history with state and time |
 | **Messages** | Errors and warnings of the printer's console, grouped |
+
+<img src="docs/img/files-page.png" alt="WM Device tab, Files page: gcode files with part picture, filament spools, Print buttons, tick boxes and the red Delete button" width="900">
+
+*The Files page: each file with its picture, filament colours, weight and a **Print** button; tick boxes and the red **Delete** at the top.*
 
 ### 2.2 The top bar
 
@@ -207,9 +211,7 @@ Lower on the Status page, the tab shows two cards. They appear only when the pri
 
 ### 2.5 Filament in the file → toolhead
 
-<img src="docs/img/filament-in-file-view.png" alt="Filament in the file to toolhead view with a warning that colours differ" width="760">
-
-A read-only picture of the filaments of the project open in Orca: on the left the filaments of the file ("in the file"), on the right the four toolheads ("on the toolheads"), with a line between them. A **solid line** means the filament of the file matches the spool on that toolhead, a **dotted line** means it does not (other colour or material). A yellow note under it says when a filament of the file is on a toolhead with another colour or material (here *Filament 1 (Black PLA) prints on toolhead 1 (Brown PLA)*). Nothing is sent from this view; you choose the real map in the window after slicing, see [3](#3-process-settings-the-wm-tool-map-step).
+The lower part of the picture above (the **Filament in the file → toolhead** card) is a read-only picture of the filaments of the project open in Orca: on the left the filaments of the file ("in the file"), on the right the four toolheads ("on the toolheads"), with a line between them. A **solid line** means the filament of the file matches the spool on that toolhead, a **dotted line** means it does not (other colour or material). A yellow note under it says when a filament of the file is on a toolhead with another colour or material (here *Filament 1 (Black PLA) prints on toolhead 1 (Brown PLA)*). Nothing is sent from this view; you choose the real map in the window after slicing, see [3](#3-process-settings-the-wm-tool-map-step).
 
 ## 3. Process settings: the WM Tool Map step
 
