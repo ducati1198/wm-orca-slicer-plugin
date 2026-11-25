@@ -53,8 +53,6 @@ Details:
 | **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
 | **History with pictures** | Last 25 prints with picture, filament colours, weight and result, a totals bar, **Print again** (opens the tool mapping window with your remembered map) and tick boxes with **Delete** for the list entries |
-| **Tangle indicator** | Each toolhead card on the Status page shows the hub tangle sensor: green *tangle: ok*, red *TANGLE* when it triggers (hidden if the printer has no such sensor) |
-| **Timelapse** | A **Timelapse** page lists the videos in the printer's timelapse folder with their preview pictures. **Play** opens the video in the tab, **Download** hands it to your browser to save, and tick boxes with **Delete** remove videos (and their preview picture) from the printer. Needs the Moonraker timelapse component |
 | **Delete files** | Tick the box next to a file picture and press the red **Delete** next to **Refresh list**; it asks first and is blocked while printing |
 | **Unload Menu and printer popups** | The **Unload Menu** button runs `WM_UNLOAD_MENU`; any popup window a printer macro shows opens in the tab, with its buttons |
 | **Spool pictures** | Filament colours are drawn as small spools (Device cards, Files page, Print mapping window) instead of plain dots |

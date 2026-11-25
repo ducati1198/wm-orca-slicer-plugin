@@ -1,14 +1,5 @@
 # Changelog
 
-## 0.29.1
-- Timelapse page: the **Open in browser** button is now called **Download** (same action: your browser opens or saves the video).
-- The video player now fits the picture, so the black bars on both sides are gone; the picture keeps the same size. The Status page camera does the same and is a little bigger (480 px tall, still 16:9).
-- **Tangle indicator** on each toolhead card in Status (from the hub tangle sensors path_0 to path_3): green "tangle: ok" while the filament is free, red "TANGLE" when the sensor triggers. Hidden on printers without these sensors.
-
-## 0.29.0
-- **Timelapse page:** lists the printer's timelapse videos (Moonraker `timelapse` folder, newest first) with their preview pictures, size and date. **Play** opens the video in the tab, **Download** hands it to your browser to save, tick boxes and a red **Delete** remove videos after a "Yes, delete" confirmation.
-- Only `.mp4` / `.webm` files inside the timelapse folder can be opened or deleted.
-
 ## 0.28.1
 - **History page upgrade:** each print shows the part picture, the filament colours as spools, the weight and a coloured result badge (last 25 prints), with a totals bar on top (prints, print time, filament, longest print).
 - **Print again** opens the tool mapping window with your remembered filament choice for that project. Entries whose file is gone show "file deleted".
