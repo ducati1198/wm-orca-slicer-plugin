@@ -12,7 +12,7 @@
 
 </div>
 
-> **Status:** the plugin runs in OrcaSlicer 2.5.2 on **macOS** and talks to a WonderMaker ZR Ultra-S through Moonraker, both the Raspberry Pi setup of [WM_Ultra_Vanilla_Klipper](https://github.com/ducati1198/WM_Ultra_Vanilla_Klipper) and a printer on the **factory** Klipper. Connecting, the live status, the approval of printer addresses and the Forget button were checked in Orca. Windows and Linux have **not** been tried. The new "Filament in the file → toolhead" panel and a full print with the tool map on a fresh setup are **still being tested**. The **ZR Ultra (not S)** is untested. Use at your own risk, see the [disclaimer](#disclaimer-use-at-your-own-risk).
+> **Status:** the plugin runs in OrcaSlicer 2.5.2 on **macOS** and talks to a WonderMaker ZR Ultra-S through Moonraker, both the Raspberry Pi setup of [WM_Ultra_Vanilla_Klipper](https://github.com/ducati1198/WM_Ultra_Vanilla_Klipper) and a printer on the **factory** Klipper. Connecting, the live status, the approval of printer addresses and the Forget button were checked in Orca. On **Windows** the plugin was checked for connecting and for remembering the printer address; Linux has **not** been tried. The new "Filament in the file → toolhead" panel and a full print with the tool map on a fresh setup are **still being tested**. The **ZR Ultra (not S)** is untested. Use at your own risk, see the [disclaimer](#disclaimer-use-at-your-own-risk).
 
 ## Contents
 
@@ -52,6 +52,8 @@ Details:
 | **Remembered map and material warning** | The tool map is remembered per project and filled in next time; a red warning shows when a filament does not match the loaded spool |
 | **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
+| **Spool pictures** | Filament colours are drawn as small spools (Device cards, Files page, Print mapping window) instead of plain dots |
+| **Remembers your printer** | The last printer address comes back after Orca restarts, also on Windows |
 | **Files page with pictures** | Each file shows a picture of the part, its filament colours and weight. **Print** opens the tool mapping window first, then starts the print |
 | **Style button** | Switches the tab between the current look and two modern dark styles |
 | **Home Z and Motors off** | Two extra buttons in the Move section (blocked while printing) |
@@ -294,6 +296,7 @@ The plugin finds out which of the two applies by asking the printer whether the 
 | The tool map window shows only the printer's own tools | Orca's filament list could not be read; the window says so. Choose the toolheads by hand |
 | The window opens on every slice and you do not want it | Set **Slicing Pipeline Plugin** to none, or press **Skip mapping** |
 | A printer comes back after **Forget** | Update to a version with the Forget fix (0.24.13 or newer) |
+| The printer address is empty after closing and reopening Orca | Update to version 0.27.0 or newer: the last printer is saved in the plugin's data folder and filled in again when the tab opens |
 | No permission dialog after installing from Orca Cloud, **needs approval** stays | Add the printer by hand: **File > Plugins**, select the plugin, **Permissions > Network access > HTTP network**, add `http://<printer address>`, check **Execution**, then press **Connect** ([1.1c](#11c-if-orca-never-asks-for-permission-add-the-printer-by-hand)). Version 0.26.1 and newer also save the printer list where the plugin finds it at load |
 | The version did not change after installing | Untick **Activate**, press **Install local plugin**, pick the new file, **Overwrite**, tick **Activate** again. Check the version at the bottom of the tab's left menu |
 | Two WM Device entries in the Plugins list | A local copy and the Cloud copy. Activate only one |

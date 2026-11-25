@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.26.1"
+# version = "0.27.0"
 # ///
 """WM Device v0.6.
 
@@ -211,6 +211,21 @@ def _own_dir():
     return os.path.join(root, "plugin_data", "wm_device")
 
 
+DIAG = {}
+
+
+def _data_dirs():
+    """Folders where the plugin keeps its small files: its own plugin_data folder and Orca's storage() folder."""
+    out = [_own_dir()]
+    try:
+        alt = str(orca.host.plugin.storage())
+        if alt and alt not in out:
+            out.append(alt)
+    except Exception as exc:  # noqa: BLE001
+        DIAG["storage"] = repr(exc)[:80]
+    return out
+
+
 def _hosts_files():
     """Every folder that may hold hosts.json: this file's own plugin_data first, then Orca's storage() when it works."""
     out = [os.path.join(_own_dir(), "hosts.json")]
@@ -239,14 +254,16 @@ def _read_hosts_from(fp):
 def _write_hosts(hosts):
     """Save the list in every folder that can be written, so the load-time read always finds it."""
     done = False
+    bad = []
     for fp in _hosts_files():
         try:
             os.makedirs(os.path.dirname(fp), exist_ok=True)
             with open(fp, "w", encoding="utf-8") as fh:
                 json.dump(hosts[-12:], fh)
             done = True
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            bad.append(repr(exc)[:60])
+    DIAG["hosts_write"] = ("ok" if done else "FAILED") + ((" err " + "; ".join(bad)) if bad else "")
     return done
 
 
@@ -348,6 +365,32 @@ def _save_forgotten(hosts):
         pass
 
 
+def set_last_host(host):
+    """The printer the tab connected to last, kept in files (the page's own browser storage is not kept on every system)."""
+    ok, bad = 0, []
+    for d in _data_dirs():
+        try:
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "last_host.json"), "w", encoding="utf-8") as fh:
+                json.dump(host or "", fh)
+            ok += 1
+        except Exception as exc:  # noqa: BLE001
+            bad.append(repr(exc)[:60])
+    DIAG["last_write"] = "ok %d" % ok + ((" err " + "; ".join(bad)) if bad else "")
+
+
+def get_last_host():
+    for d in _data_dirs():
+        try:
+            with open(os.path.join(d, "last_host.json"), "r", encoding="utf-8") as fh:
+                v = json.load(fh)
+            if isinstance(v, str) and v:
+                return v
+        except Exception:  # noqa: BLE001
+            pass
+    return ""
+
+
 def remember_host(base, auto=False):
     """Remember a printer host so the next start pre-approves it in the single permission dialog.
     auto=True is for addresses the plugin found by itself (Orca's printer setting): never for one the user erased."""
@@ -408,6 +451,25 @@ def declare_permissions():
             request(threading=True)
         except Exception:  # noqa: BLE001
             pass
+
+
+def _diag_text():
+    """Where the saved printer list lives and what is in it (shown small in the tab, to find why it is not kept)."""
+    try:
+        lines = []
+        for fp in _hosts_files():
+            try:
+                sz = os.path.getsize(fp)
+                with open(fp, "r", encoding="utf-8") as fh:
+                    n = len(json.load(fh))
+                lines.append("FILE %s: %d bytes, %d printers" % (fp, sz, n))
+            except Exception as exc:  # noqa: BLE001
+                lines.append("FILE %s: %s" % (fp, repr(exc)[:70]))
+        lines.append("last=%r" % get_last_host())
+        lines.append("; ".join("%s=%s" % kv for kv in DIAG.items()))
+        return "\n".join(lines)[:700]
+    except Exception as exc:  # noqa: BLE001
+        return "diag error " + repr(exc)[:100]
 
 
 class Poller:
@@ -932,6 +994,7 @@ button{border-radius:10px;padding:8px 16px;font-weight:600}
 .slot.act .spl{box-shadow:none;border-color:rgba(255,255,255,.12)}
 .slot.empty .spl{border:2px dashed var(--orca-border)}
 .slot .spl small{font-size:10px}
+.slot .spl.sp{border:0!important;overflow:visible}.slot .spl.sp small{position:relative;color:#fff}
 .slot .tl{margin-top:10px;font-size:13px}
 .acecard{background:var(--card2);border-radius:12px}
 .kv{gap:14px}.kv span:last-child{white-space:nowrap}
@@ -1045,7 +1108,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-files" onclick="showTab('files')">Files</div>
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px">v0.26.1</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.27.0</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1251,11 +1314,13 @@ function fmtDur(t){var h=Math.floor(t/3600),m=Math.round((t%3600)/60);return (h?
 function renderFiles(){var h="";FROWS.forEach(function(f){var mt=FMETA[f.path]||{};var d=new Date(f.modified*1000).toLocaleDateString()+" · "+(f.size/1048576).toFixed(1)+" MB";
   if(mt.h)d+=" · "+fmtDur(mt.h);if(mt.g)d+=" · "+Math.round(mt.g)+" g";
   var th=mt.th?'<img class="fth" src="'+esc(mt.th)+'" onerror="this.style.visibility=\'hidden\'">':'<div class="fth"></div>';
-  var dots=(mt.c||[]).map(function(c,i){var u=!mt.u||mt.u[i];return '<span class="fdot" style="background:'+esc(c)+(u?"":";opacity:.25")+'"></span>'}).join("");
+  var dots=(mt.c||[]).map(function(c,i){var u=!mt.u||mt.u[i];return '<span style="display:inline-flex'+(u?"":";opacity:.3")+'">'+spool(c,20)+'</span>'}).join("");
   h+='<div class="frow">'+th+'<div class="fmid"><div class="fname">'+esc(f.path)+'</div><div class="muted">'+d+'</div><div class="fdots">'+dots+'</div></div><button class="pri" '+((STATE==="printing"||STATE==="paused")?"disabled":"")+' data-f="'+esc(f.path)+'">Print</button></div>'});
   $("files").innerHTML=h||"no files in gcodes";
   Array.prototype.forEach.call($("files").querySelectorAll("button"),function(b){b.onclick=function(){printFile(b.getAttribute("data-f"))}})}
 function ink(c){var m=/^#?([0-9a-f]{6})$/i.exec(c||"");if(!m)return "#fff";var n=parseInt(m[1],16),r=n>>16,g=(n>>8)&255,b=n&255;return (0.299*r+0.587*g+0.114*b)>150?"#111":"#fff"}
+function wedge(a0,a1,r1,r2){function q(r,a){return (r*Math.cos(a)).toFixed(2)+" "+(r*Math.sin(a)).toFixed(2)}return "M"+q(r2,a0)+" A"+r2+" "+r2+" 0 0 1 "+q(r2,a1)+" L"+q(r1,a1)+" A"+r1+" "+r1+" 0 0 0 "+q(r1,a0)+" Z"}
+function spool(c,z){c=esc(c||"#808080");z=z||20;var k="rgba(0,0,0,.6)",s='<svg viewBox="-50 -50 100 100" width="'+z+'" height="'+z+'" style="flex:none;vertical-align:middle"><circle r="47" fill="'+c+'" stroke="'+k+'" stroke-width="4"/>';for(var i=0;i<6;i++){var m=i*Math.PI/3-Math.PI/2;s+='<path d="'+wedge(m-.36,m+.36,20,38)+'" fill="#1b1d20" stroke="'+k+'" stroke-width="3" stroke-linejoin="round"/>'}return s+'<circle r="13" fill="'+c+'" stroke="'+k+'" stroke-width="4"/><circle r="6" fill="#1b1d20" stroke="'+k+'" stroke-width="2"/></svg>'}
 var TABS=["status","files","hist","msgs"];
 function showTab(n){TABS.forEach(function(k){$("v-"+k).style.display=k===n?"block":"none";$("n-"+k).className="ni"+(k===n?" sel":"")})}
 var ARMT=null,STEP=10;
@@ -1391,14 +1456,14 @@ function render(m){
   for(var i=0;i<4;i++){var x=s[names[i]];if(!x)continue;
     var f=s["filament_switch_sensor filament"+i],d=s["filament_switch_sensor docked"+i],k=sl[i]||{};
     var present=f&&f.filament_detected,col=k.colour||"",act=cur===names[i];
-    var inner=(col||k.material)?('<span>'+esc(k.material||"set")+'</span>'+(!present?'<small>no filament</small>':'')+'<span class="pen">&#9998;</span>'):('<span>'+(present?"Set colour":"Empty")+'</span><span class="pen">&#9998;</span>');
-    var st2=(col?'background:'+esc(col)+';color:'+ink(col)+';':'')+(present||!col?'':'opacity:.55;');
-    h+='<div class="slot'+(act?' act':'')+((col||k.material)?'':' empty')+'" onclick="editSpool('+i+')"><div class="spl" style="'+st2+'">'+inner+'</div>'
-     +'<div class="tl">T'+(i+1)+(act?' (active)':'')+'</div><div class="tt">'+t(x.temperature)+' / '+(x.target>0?t(x.target):"off")+'</div>'
+    var inner=(col||k.material)?((col?'<span style="position:absolute;inset:0;display:flex">'+spool(col,"100%")+'</span>':'')+(col?'':'<span>'+esc(k.material||"set")+'</span>')+(!present?'<small>no filament</small>':'')+'<span class="pen">&#9998;</span>'):('<span>'+(present?"Set colour":"Empty")+'</span><span class="pen">&#9998;</span>');
+    var st2=(present||!col?'':'opacity:.55;');
+    h+='<div class="slot'+(act?' act':'')+((col||k.material)?'':' empty')+'" onclick="editSpool('+i+')"><div class="spl'+(col?' sp':'')+'" style="'+st2+'">'+inner+'</div>'
+     +'<div class="tl">T'+(i+1)+(col&&k.material?' '+esc(k.material):'')+(act?' (active)':'')+'</div><div class="tt">'+t(x.temperature)+' / '+(x.target>0?t(x.target):"off")+'</div>'
      +'<div class="tt"><span class="dot '+(present?"on":"red")+'"></span>'+(present?"filament":"empty")+' <span class="dot '+(d&&d.filament_detected?"on":"off")+'" style="margin-left:6px"></span>'+(d&&d.filament_detected?"docked":"out")+'</div><svg class="spark" id="hsp'+i+'"></svg></div>';}
   }else if(s.ace&&s.ace.lanes){
     s.ace.lanes.forEach(function(l){var has=!!(l.material||l.color),col=l.color||"";
-      h+='<div class="slot'+(has?'':' empty')+'"><div class="spl" style="'+(col?'background:'+esc(col)+';color:'+ink(col)+';':'')+'"><span>'+(has?esc(l.material||l.filament_name||""):"Empty")+'</span></div><div class="tl">ACE '+(parseInt(l.lane)+1)+'</div></div>';});
+      h+='<div class="slot'+(has?'':' empty')+'"><div class="spl'+(col?' sp':'')+'">'+(col?'<span style="position:absolute;inset:0;display:flex">'+spool(col,"100%")+'</span>':'<span>'+(has?esc(l.material||l.filament_name||""):"Empty")+'</span>')+'</div><div class="tl">ACE '+(parseInt(l.lane)+1)+(col&&(l.material||l.filament_name)?' '+esc(l.material||l.filament_name):'')+'</div></div>';});
     var x0=s.extruder;if(x0)h+='<div class="slot act"><div class="spl" style="height:84px"><span>'+t(x0.temperature)+'</span><small>nozzle</small></div><div class="tl">Nozzle</div><div class="tt">target '+(x0.target>0?t(x0.target):"off")+'</div></div>';
   }
   $("heads").innerHTML=h;renderAce(s);renderFil(s,sl);
@@ -1423,7 +1488,7 @@ function render(m){
   $("upd").textContent="updated "+new Date(m.time*1000).toLocaleTimeString();}
 orca.onMessage(function(m){
   if(m.type==="state")render(m);
-  if(m.type==="defaults"&&m.host){addOpt(m.host);if(!$("addr").value.trim()){$("addr").value=m.host;syncPreset(m.host)}}
+  if(m.type==="defaults"){(m.hosts||[]).forEach(addOpt);if(m.host)addOpt(m.host);if(!$("addr").value.trim()){if(m.last){$("addr").value=m.last;addOpt(m.last);syncPreset(m.last);connect()}else if(m.host){$("addr").value=m.host;syncPreset(m.host)}}}
   if(m.type==="orcafils"){FILS=m.fils||[];FILERR=m.err||"";if(LS&&LS.print_stats)renderFil(LS,SLOTS)}
   if(m.type==="approve"){$("err").textContent="New printer "+m.host+": Orca approves a printer address only while the plugin loads. It is saved now. Close Orca and open it again, approve the permission dialog for this printer, then press Connect. You only do this once per new printer.";$("conn").textContent="needs approval";return}
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
@@ -1436,6 +1501,7 @@ orca.onMessage(function(m){
 });
 try{(JSON.parse(localStorage.getItem("wmdev_addrs")||"[]")).forEach(addOpt)}catch(e){}
 try{var a=localStorage.getItem("wmdev_addr");if(a){$("addr").value=a;addOpt(a);syncPreset(a);connect()}else{orca.postMessage({type:"defaults"})}}catch(e){}
+(function(){var n=0;function ask(){try{if(!$("addr").value.trim()&&n<12){n++;orca.postMessage({type:"defaults"});setTimeout(ask,1500)}}catch(e){setTimeout(ask,1500)}}setTimeout(ask,800)})();
 </script></body></html>"""
 
 
@@ -1592,10 +1658,12 @@ function calc(){var res=ROWS.map(function(){return-1}),used={};
   ROWS.forEach(function(f,i){if(res[i]>=0)return;var b=-1,bd=1e9;H.forEach(function(h){if(h.loaded===false)return;var d=cdist(f.colour,h.colour);if(d<bd){bd=d;b=h.i}});res[i]=b>=0?b:i});return res}
 function auto(){var r=calc();ROWS.forEach(function(f,i){MAP[i]=r[i]});draw()}
 function pick(i,h){if(H[h]&&H[h].loaded===false)return;var old=MAP[i];for(var j=0;j<ROWS.length;j++){if(j!==i&&MAP[j]===h){MAP[j]=old;break}}MAP[i]=h;CONF=false;draw()}
+function wedge(a0,a1,r1,r2){function q(r,a){return (r*Math.cos(a)).toFixed(2)+" "+(r*Math.sin(a)).toFixed(2)}return "M"+q(r2,a0)+" A"+r2+" "+r2+" 0 0 1 "+q(r2,a1)+" L"+q(r1,a1)+" A"+r1+" "+r1+" 0 0 0 "+q(r1,a0)+" Z"}
+function spool(c,z){c=esc(c||"#808080");z=z||20;var k="rgba(0,0,0,.6)",s='<svg viewBox="-50 -50 100 100" width="'+z+'" height="'+z+'" style="flex:none;vertical-align:middle"><circle r="47" fill="'+c+'" stroke="'+k+'" stroke-width="4"/>';for(var i=0;i<6;i++){var m=i*Math.PI/3-Math.PI/2;s+='<path d="'+wedge(m-.36,m+.36,20,38)+'" fill="#1b1d20" stroke="'+k+'" stroke-width="3" stroke-linejoin="round"/>'}return s+'<circle r="13" fill="'+c+'" stroke="'+k+'" stroke-width="4"/><circle r="6" fill="#1b1d20" stroke="'+k+'" stroke-width="2"/></svg>'}
 function draw(){var users={},warn=[],h="";ROWS.forEach(function(f,i){users[MAP[i]]=(users[MAP[i]]||0)+1});
   ROWS.forEach(function(f,i){var hd=H[MAP[i]]||{},ok=hd.loaded!==false&&sameMat(f.type,hd.mat)&&cdist(f.colour,hd.colour)<=300;
     if(!ok)warn.push(hd.loaded===false?"Toolhead "+(MAP[i]+1)+" is empty: load filament before printing filament "+(i+1)+".":"Filament "+(i+1)+" ("+cname(f.colour)+" "+(f.type||"")+") does not match toolhead "+(MAP[i]+1)+" ("+(hd.colour?cname(hd.colour):"no colour")+" "+(hd.mat||"")+"). Pick another or send anyway.");
-    h+='<div class="r '+(ok?'ok':'')+'"><span class="dot" style="background:'+esc(f.colour||"#808080")+'"></span><div class="n">Filament '+(i+1)+'<small>'+esc(f.type||"")+'</small></div>'
+    h+='<div class="r '+(ok?'ok':'')+'">'+spool(f.colour,28)+'<div class="n">Filament '+(i+1)+'<small>'+esc(f.type||"")+'</small></div>'
     +H.map(function(x){var off=x.loaded===false;return'<button class="h'+(MAP[i]===x.i?' sel':'')+(off?' off':'')+'" onclick="pick('+i+','+x.i+')"><i style="background:'+(off?'transparent':esc(x.colour||"#808080"))+'"></i>T'+x.i+' '+(off?'empty':esc(x.mat||""))+'</button>'}).join("")
     +'<span class="st" style="color:'+(ok?'#35c46a':'#e0a030')+'">'+(ok?'MATCH':'CHECK')+'</span></div>'});
   Object.keys(users).forEach(function(k){if(users[k]>1)warn.push("Toolhead "+(Number(k)+1)+" will print "+users[k]+" file colours with the same filament.")});
@@ -1914,14 +1982,20 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                     # Orca only accepts a permission request while the plugin loads, and an address it was not told about
                     # prompts once per URL. Remember it, so the next start approves it in the single dialog.
                     remember_host(base)
+                    set_last_host(_host_of(base))
+                    self._post({"type": "defaults", "diag": _diag_text()})
                     self._post({"type": "approve", "host": _host_of(base),
                                 "info": (PERM["req"] or "no request") + (" | read error: " + PERM["err"] if PERM["err"] else "")})
                     return
                 MAPSTATE["base"] = base
                 remember_host(base)
+                set_last_host(_host_of(base))
+                self._post({"type": "defaults", "diag": _diag_text()})
                 self.poller.set_base(MAPSTATE["base"])
             elif kind == "forget":
                 forget_host(base_url(message.get("addr")))
+                if get_last_host() == _host_of(base_url(message.get("addr"))):
+                    set_last_host("")
                 if self.poller is not None and MAPSTATE.get("base") == base_url(message.get("addr")):
                     self.poller.set_base("")
                     MAPSTATE["base"] = ""
@@ -1930,7 +2004,16 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                 remember_host(ph, auto=True)
                 if _host_of(ph) in forgotten_hosts():
                     ph = ""
-                self._post({"type": "defaults", "host": ph.replace("http://", "").replace(":7125", "")})
+                gone = forgotten_hosts()
+                saved = [h for h in known_hosts() if h not in gone]
+                last = get_last_host()
+                if last in gone:
+                    last = ""
+                if last and last not in saved:
+                    saved.append(last)
+                diag = _diag_text()
+                self._post({"type": "defaults", "host": ph.replace("http://", "").replace(":7125", ""),
+                            "hosts": saved, "last": last, "diag": diag})
             elif kind == "ping":
                 if self.poller is not None:
                     self.poller.beat()
