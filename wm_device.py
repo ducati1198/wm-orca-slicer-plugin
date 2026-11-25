@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.28.1"
+# version = "0.29.1"
 # ///
 """WM Device v0.6.
 
@@ -18,6 +18,7 @@ import json
 import os
 import re
 import threading
+import webbrowser
 import time
 import urllib.parse
 import urllib.request
@@ -32,7 +33,7 @@ WANT = ["print_stats", "display_status", "virtual_sdcard", "heater_bed", "heater
         "fan", "fan_generic auxiliary_fan", "fan_generic air_fan", "idle_timeout", "gcode_move", "webhooks",
         "ace", "save_variables", "output_pin ACE_Pro", "output_pin ACE_Auto_Load", "gcode_macro _WM_ACE",
         "gcode_macro _WM_ENDLESS", "gcode_macro _WM_ENDLESS_CONTINUE", "gcode_macro WM_CHAMBER_LIGHT", "gcode_macro WM_UNLOAD_MENU",
-        "gcode_macro _ZR_SET_TOOL_INFO"] + [f"ace_instance_{i}" for i in range(4)] + EXTRUDERS + [f"filament_switch_sensor {n}{i}" for n in ("filament", "docked") for i in range(HEADS)]
+        "gcode_macro _ZR_SET_TOOL_INFO"] + [f"ace_instance_{i}" for i in range(4)] + EXTRUDERS + [f"filament_switch_sensor {n}{i}" for n in ("filament", "docked", "path_") for i in range(HEADS)]
 
 # Same lists as the ZR Tools screen / Spool and Toolhead Mapper plugin
 ZR_COLOURS = ["#FFFFFF", "#F3E8C8", "#9A6738", "#C7D5DF", "#000000", "#00DDE3", "#13A7E8", "#0B4BD8", "#16E900",
@@ -730,6 +731,61 @@ class Poller:
         except Exception as exc:  # noqa: BLE001
             self.post({"type": "result", "ok": False, "text": "print with map: " + repr(exc)})
 
+    def timelapse(self):
+        """List the timelapse videos (Moonraker root 'timelapse'); the preview picture is the .jpg with the same name."""
+        try:
+            rows = http_json(self.base + "/server/files/list?root=timelapse")["result"]
+            pics = {}
+            for r in rows:
+                p = r.get("path", "")
+                if p.lower().endswith(".jpg"):
+                    pics[os.path.splitext(p)[0].replace("_previewImage", "")] = p
+            vids = []
+            for r in sorted(rows, key=lambda r: r.get("modified", 0), reverse=True):
+                p = r.get("path", "")
+                if not p.lower().endswith((".mp4", ".webm")):
+                    continue
+                pic = pics.get(os.path.splitext(p)[0])
+                vids.append({"path": p, "size": r.get("size", 0), "modified": r.get("modified", 0),
+                             "url": self.base + "/server/files/timelapse/" + urllib.parse.quote(p, safe="/"),
+                             "th": (self.base + "/server/files/timelapse/" + urllib.parse.quote(pic, safe="/")) if pic else ""})
+            self.post({"type": "timelapse", "vids": vids[:60]})
+        except Exception as exc:  # noqa: BLE001
+            self.post({"type": "timelapse", "vids": [], "error": repr(exc)[:120]})
+
+    def delete_timelapse(self, paths):
+        ok, errs = 0, []
+        for p in paths:
+            p = str(p or "").strip().lstrip("/")
+            if not p or ".." in p.split("/") or "\\" in p or not p.lower().endswith((".mp4", ".webm")):
+                errs.append("skipped a bad file name")
+                continue
+            try:
+                http_json(self.base + "/server/files/timelapse/" + urllib.parse.quote(p, safe="/"), method="DELETE", timeout=15)
+                ok += 1
+                stem = os.path.splitext(p)[0]
+                for pic in (stem + ".jpg", stem + "_previewImage.jpg"):
+                    try:
+                        http_json(self.base + "/server/files/timelapse/" + urllib.parse.quote(pic, safe="/"), method="DELETE", timeout=8)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as exc:  # noqa: BLE001
+                errs.append(p + ": " + repr(exc)[:90])
+        text = "deleted %d video%s" % (ok, "" if ok == 1 else "s")
+        if errs:
+            text += "; not deleted: " + "; ".join(errs[:3])
+        self.post({"type": "result", "ok": not errs, "text": text})
+        self.timelapse()
+
+    def open_timelapse(self, path):
+        """Open one video in the person's own browser; only a file in the printer's timelapse folder is allowed."""
+        p = str(path or "").strip().lstrip("/")
+        if not p or ".." in p.split("/") or not p.lower().endswith((".mp4", ".webm")):
+            self.post({"type": "result", "ok": False, "text": "bad video name"})
+            return
+        webbrowser.open(self.base + "/server/files/timelapse/" + urllib.parse.quote(p, safe="/"))
+        self.post({"type": "result", "ok": True, "text": "download started: " + os.path.basename(p)})
+
     def history(self):
         try:
             jobs = http_json(self.base + "/server/history/list?limit=25&order=desc")["result"]["jobs"]
@@ -1195,7 +1251,7 @@ button.lnk{border:0;background:transparent;color:#4aa3ff;font-weight:600;letter-
 .slot .tl{margin-top:6px}
 .ring{width:92px;height:92px}.ring b{width:70px;height:70px;font-size:19px}
 .pr{gap:18px}
-.cam{max-height:420px}
+.cam{max-height:480px;height:480px;width:auto;max-width:100%;margin:0 auto;background:transparent}
 .mvbox{gap:18px}
 .frow{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:12px;background:var(--card2);margin-bottom:8px}
 .fth{width:64px;height:64px;flex:none;border-radius:10px;background:rgba(128,128,128,.18);object-fit:contain}
@@ -1228,8 +1284,9 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni sel" id="n-status" onclick="showTab('status')">Status</div>
 <div class="ni" id="n-files" onclick="showTab('files')">Files</div>
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
+<div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.28.1</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.1</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1332,6 +1389,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 
 <div id="v-files" style="display:none"><div class="panel"><div class="ph">Files <span class="sp"></span><button onclick="loadFiles()">Refresh list</button> <button id="delBtn" onclick="askDelete()" style="background:#c0392b;border-color:#c0392b;color:#fff">Delete</button></div><div class="pb"><div id="delbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="files" class="muted">press Refresh list</div></div></div></div>
 <div id="v-hist" style="display:none"><div class="panel"><div class="ph">Print history <span class="sp"></span><button onclick="loadHist()">Refresh</button> <button onclick="askDelHist()" style="background:#c0392b;border-color:#c0392b;color:#fff" id="hDelBtn">Delete</button></div><div class="pb"><div id="htot" style="display:flex;gap:10px;margin-bottom:12px"></div><div id="hdelbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="hist" class="muted">loading...</div></div></div></div>
+<div id="v-tl" style="display:none"><div class="panel"><div class="ph">Timelapse videos <span class="sp"></span><button onclick="loadTL()">Refresh</button> <button onclick="askDelTL()" style="background:#c0392b;border-color:#c0392b;color:#fff" id="tDelBtn">Delete</button></div><div class="pb"><div id="tlplay" style="display:none;margin-bottom:12px"><video id="tlvid" controls style="display:block;margin:0 auto;width:auto;max-width:100%;height:auto;max-height:420px;background:transparent;border-radius:10px"></video><div style="display:flex;justify-content:space-between;margin-top:6px"><span id="tlname" class="muted"></span><button onclick="closeTL()">Close</button></div></div><div id="tdelbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="tlcount" class="muted" style="margin-bottom:8px"></div><div id="tllist" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px" class="muted">loading...</div></div></div></div>
 <div id="v-msgs" style="display:none"><div class="panel"><div class="ph">Messages and errors</div><div class="pb"><div id="msgs" class="muted">-</div></div></div></div>
 <div class="muted" id="upd" style="margin-top:10px"></div>
 </div>
@@ -1393,6 +1451,24 @@ function askDelHist(){var l=Object.keys(HSEL),r=$("res");if(!l.length){r.classNa
   var b=$("hdelbar");b.style.display="block";b.innerHTML='<div style="font-weight:700;margin-bottom:6px">Remove '+l.length+' entr'+(l.length>1?"ies":"y")+' from the history list?</div><div class="muted" style="margin-bottom:10px">Only the list entries go. The gcode files stay on the printer.</div><button id="hdYes" style="background:#c0392b;border-color:#c0392b;color:#fff">Yes, remove</button> <button id="hdNo">Cancel</button>';
   $("hdNo").onclick=function(){b.style.display="none"};
   $("hdYes").onclick=function(){var x=Object.keys(HSEL);HSEL={};b.style.display="none";updHDel();$("res").className="muted";$("res").textContent="removing...";orca.postMessage({type:"deletehist",ids:x})}}
+function loadTL(){TLLOADED=true;$("tllist").textContent="loading...";orca.postMessage({type:"timelapse"})}
+function updTDel(){var n=Object.keys(TSEL).length;$("tDelBtn").textContent=n?"Delete ("+n+")":"Delete"}
+function renderTL(){var h="";TLV.forEach(function(v){var d=new Date(v.modified*1000).toLocaleDateString()+" · "+(v.size/1048576).toFixed(1)+" MB";
+  var th=v.th?'<img src="'+esc(v.th)+'" style="width:100%;height:110px;object-fit:cover;display:block" onerror="this.style.visibility=\'hidden\'">':'<div style="height:110px"></div>';
+  h+='<div style="border:1px solid var(--keyb);border-radius:12px;overflow:hidden;background:var(--card2,#1d2128)"><div style="position:relative;background:#000">'+th+'<input type="checkbox" class="fchk" data-t="'+esc(v.path)+'" '+(TSEL[v.path]?"checked":"")+' style="position:absolute;top:8px;left:8px"></div><div style="padding:10px"><div class="fname" style="font-weight:600;word-break:break-all">'+esc(v.path)+'</div><div class="muted" style="margin:2px 0 8px">'+d+'</div><div style="display:flex;gap:8px"><button class="pri" style="flex:1" data-p="'+esc(v.path)+'">Play</button><button data-o="'+esc(v.path)+'" title="Download this video">Download</button></div></div></div>'});
+  $("tllist").innerHTML=h||(TLERR?"timelapse not available: "+esc(TLERR):"no timelapse videos yet");
+  $("tlcount").textContent=TLV.length?TLV.length+" video"+(TLV.length==1?"":"s"):"";
+  var L=$("tllist");
+  Array.prototype.forEach.call(L.querySelectorAll("button[data-p]"),function(b){b.onclick=function(){playTL(b.getAttribute("data-p"))}});
+  Array.prototype.forEach.call(L.querySelectorAll("button[data-o]"),function(b){b.onclick=function(){orca.postMessage({type:"opentl",file:b.getAttribute("data-o")})}});
+  Array.prototype.forEach.call(L.querySelectorAll(".fchk"),function(c){c.onchange=function(){var k=c.getAttribute("data-t");if(c.checked)TSEL[k]=1;else delete TSEL[k];updTDel()}});
+  var keep={};TLV.forEach(function(v){if(TSEL[v.path])keep[v.path]=1});TSEL=keep;updTDel()}
+function playTL(p){var v=TLV.filter(function(x){return x.path===p})[0];if(!v)return;$("tlplay").style.display="block";$("tlname").textContent=p;var e=$("tlvid");e.src=v.url;e.load();e.play().catch(function(){})}
+function closeTL(){var e=$("tlvid");e.pause();e.removeAttribute("src");e.load();$("tlplay").style.display="none"}
+function askDelTL(){var x=Object.keys(TSEL),b=$("tdelbar");if(!x.length){$("res").className="err";$("res").textContent="tick the videos to delete first";return}
+  b.style.display="block";b.innerHTML='<div style="font-weight:700;margin-bottom:6px">Delete '+x.length+' timelapse video'+(x.length==1?"":"s")+' from the printer? This cannot be undone.</div><div class="muted" style="margin-bottom:8px">'+x.map(esc).join(", ")+'</div><button id="tdYes" style="background:#c0392b;border-color:#c0392b;color:#fff">Yes, delete</button> <button id="tdNo">Cancel</button>';
+  $("tdNo").onclick=function(){b.style.display="none"};
+  $("tdYes").onclick=function(){var y=Object.keys(TSEL);TSEL={};b.style.display="none";updTDel();closeTL();$("res").className="muted";$("res").textContent="deleting...";orca.postMessage({type:"deletetl",files:y})}}
 function loadHist(){$("hist").textContent="loading...";orca.postMessage({type:"history"})}
 setInterval(function(){try{orca.postMessage({type:"ping"})}catch(e){}},3000);
 reqFils();setInterval(reqFils,6000);
@@ -1452,6 +1528,7 @@ function loadFiles(){$("files").textContent="loading...";orca.postMessage({type:
 function printFile(f){$("res").className="muted";$("res").textContent="opening the mapping window...";orca.postMessage({type:"printfile",file:f})}
 var FROWS=[],FMETA={},SEL={};
 function fmtDur(t){var h=Math.floor(t/3600),m=Math.round((t%3600)/60);return (h?h+"h ":"")+m+"m"}
+function tgl(p){if(!p)return"";var ok=!!p.filament_detected;return '<div class="tt"><span class="dot '+(ok?"on":"red")+'"></span>'+(ok?"tangle: ok":"TANGLE")+'</div>'}
 function renderFiles(){var h="";FROWS.forEach(function(f){var mt=FMETA[f.path]||{};var d=new Date(f.modified*1000).toLocaleDateString()+" · "+(f.size/1048576).toFixed(1)+" MB";
   if(mt.h)d+=" · "+fmtDur(mt.h);if(mt.g)d+=" · "+Math.round(mt.g)+" g";
   var th=mt.th?'<img class="fth" src="'+esc(mt.th)+'" onerror="this.style.visibility=\'hidden\'">':'<div class="fth"></div>';
@@ -1483,8 +1560,8 @@ function askDelete(){var l=selList(),r=$("res");if(!l.length){r.className="err";
 function ink(c){var m=/^#?([0-9a-f]{6})$/i.exec(c||"");if(!m)return "#fff";var n=parseInt(m[1],16),r=n>>16,g=(n>>8)&255,b=n&255;return (0.299*r+0.587*g+0.114*b)>150?"#111":"#fff"}
 function wedge(a0,a1,r1,r2){function q(r,a){return (r*Math.cos(a)).toFixed(2)+" "+(r*Math.sin(a)).toFixed(2)}return "M"+q(r2,a0)+" A"+r2+" "+r2+" 0 0 1 "+q(r2,a1)+" L"+q(r1,a1)+" A"+r1+" "+r1+" 0 0 0 "+q(r1,a0)+" Z"}
 function spool(c,z){c=esc(c||"#808080");z=z||20;var k="rgba(0,0,0,.6)",s='<svg viewBox="-50 -50 100 100" width="'+z+'" height="'+z+'" style="flex:none;vertical-align:middle"><circle r="47" fill="'+c+'" stroke="'+k+'" stroke-width="4"/>';for(var i=0;i<6;i++){var m=i*Math.PI/3-Math.PI/2;s+='<path d="'+wedge(m-.36,m+.36,20,38)+'" fill="#1b1d20" stroke="'+k+'" stroke-width="3" stroke-linejoin="round"/>'}return s+'<circle r="13" fill="'+c+'" stroke="'+k+'" stroke-width="4"/><circle r="6" fill="#1b1d20" stroke="'+k+'" stroke-width="2"/></svg>'}
-var TABS=["status","files","hist","msgs"];
-function showTab(n){TABS.forEach(function(k){$("v-"+k).style.display=k===n?"block":"none";$("n-"+k).className="ni"+(k===n?" sel":"")})}
+var TABS=["status","files","hist","tl","msgs"],TLV=[],TSEL={},TLERR="",TLLOADED=false;
+function showTab(n){if(n==="tl"&&!TLLOADED)loadTL();TABS.forEach(function(k){$("v-"+k).style.display=k===n?"block":"none";$("n-"+k).className="ni"+(k===n?" sel":"")})}
 var ARMT=null,STEP=10;
 
 function mvState(){}
@@ -1622,7 +1699,7 @@ function render(m){
     var st2=(present||!col?'':'opacity:.55;');
     h+='<div class="slot'+(act?' act':'')+((col||k.material)?'':' empty')+'" onclick="editSpool('+i+')"><div class="spl'+(col?' sp':'')+'" style="'+st2+'">'+inner+'</div>'
      +'<div class="tl">T'+(i+1)+(col&&k.material?' '+esc(k.material):'')+(act?' (active)':'')+'</div><div class="tt">'+t(x.temperature)+' / '+(x.target>0?t(x.target):"off")+'</div>'
-     +'<div class="tt"><span class="dot '+(present?"on":"red")+'"></span>'+(present?"filament":"empty")+' <span class="dot '+(d&&d.filament_detected?"on":"off")+'" style="margin-left:6px"></span>'+(d&&d.filament_detected?"docked":"out")+'</div><svg class="spark" id="hsp'+i+'"></svg></div>';}
+     +'<div class="tt"><span class="dot '+(present?"on":"red")+'"></span>'+(present?"filament":"empty")+' <span class="dot '+(d&&d.filament_detected?"on":"off")+'" style="margin-left:6px"></span>'+(d&&d.filament_detected?"docked":"out")+'</div>'+tgl(s["filament_switch_sensor path_"+i])+'<svg class="spark" id="hsp'+i+'"></svg></div>';}
   }else if(s.ace&&s.ace.lanes){
     s.ace.lanes.forEach(function(l){var has=!!(l.material||l.color),col=l.color||"";
       h+='<div class="slot'+(has?'':' empty')+'"><div class="spl'+(col?' sp':'')+'">'+(col?'<span style="position:absolute;inset:0;display:flex">'+spool(col,"100%")+'</span>':'<span>'+(has?esc(l.material||l.filament_name||""):"Empty")+'</span>')+'</div><div class="tl">ACE '+(parseInt(l.lane)+1)+(col&&(l.material||l.filament_name)?' '+esc(l.material||l.filament_name):'')+'</div></div>';});
@@ -1656,6 +1733,7 @@ orca.onMessage(function(m){
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
   if(m.type==="prompt"){var pm=$("pmodal");if(m.close||!m.prompt){pm.style.display="none"}else{showPrompt(m.prompt)}}
   if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text}
+  if(m.type==="timelapse"){TLV=m.vids||[];TLERR=m.error||"";renderTL()}
   if(m.type==="history"){HJOBS=m.jobs||[];HTOT=m.totals||null;HERR=m.error||"";renderHist()}
   if(m.type==="files"){FROWS=m.files;FROWS.sort(function(a,b){return b.modified-a.modified});renderFiles()}
   if(m.type==="filemeta"){for(var fk in m.meta)FMETA[fk]=m.meta[fk];renderFiles();if(HJOBS.length)renderHist()}
@@ -2194,6 +2272,12 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                 threading.Thread(target=self.poller.action, daemon=True, args=(message,)).start()
             elif kind == "history":
                 threading.Thread(target=self.poller.history, daemon=True).start()
+            elif kind == "timelapse":
+                threading.Thread(target=self.poller.timelapse, daemon=True).start()
+            elif kind == "deletetl":
+                threading.Thread(target=self.poller.delete_timelapse, daemon=True, args=([str(x) for x in (message.get("files") or [])][:50],)).start()
+            elif kind == "opentl":
+                threading.Thread(target=self.poller.open_timelapse, daemon=True, args=(str(message.get("file", "")),)).start()
             elif kind == "deletehist":
                 threading.Thread(target=self.poller.delete_history, daemon=True, args=([str(x) for x in (message.get("ids") or [])][:50],)).start()
             elif kind == "promptbtn":
