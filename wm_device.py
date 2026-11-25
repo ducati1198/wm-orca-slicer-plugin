@@ -1528,7 +1528,7 @@ function loadFiles(){$("files").textContent="loading...";orca.postMessage({type:
 function printFile(f){$("res").className="muted";$("res").textContent="opening the mapping window...";orca.postMessage({type:"printfile",file:f})}
 var FROWS=[],FMETA={},SEL={};
 function fmtDur(t){var h=Math.floor(t/3600),m=Math.round((t%3600)/60);return (h?h+"h ":"")+m+"m"}
-function tgl(p){if(!p)return"";var ok=!!p.filament_detected;return '<div class="tt"><span class="dot '+(ok?"on":"red")+'"></span>'+(ok?"tangle: ok":"TANGLE")+'</div>'}
+function tgl(p){if(!p)return"";var tg=!p.filament_detected;return '<div class="tt"><span class="dot '+(tg?"red":"off")+'"></span>'+(tg?"TANGLE":"tangle")+'</div>'}
 function renderFiles(){var h="";FROWS.forEach(function(f){var mt=FMETA[f.path]||{};var d=new Date(f.modified*1000).toLocaleDateString()+" · "+(f.size/1048576).toFixed(1)+" MB";
   if(mt.h)d+=" · "+fmtDur(mt.h);if(mt.g)d+=" · "+Math.round(mt.g)+" g";
   var th=mt.th?'<img class="fth" src="'+esc(mt.th)+'" onerror="this.style.visibility=\'hidden\'">':'<div class="fth"></div>';
