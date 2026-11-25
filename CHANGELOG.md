@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.25.6
+- **Camera** now shows the whole picture (like Fluidd) instead of a cropped one.
+- New **Refresh camera** button next to Hide camera: reloads the stream and turns the camera back on.
+- The toolhead list is re-read now and then, so the filament cards come back if it was read while Klipper was restarting.
+
+## 0.25.0 - 0.25.5
+- **Remembered tool map:** the map you choose is saved per project (file name without the time part, plus the number of filaments) and filled in the next time you export it. Saved in the plugin's data folder.
+- **Material warning** in the mapping window: a red "Different material" note when a filament does not match the loaded spool. The first press of Apply / Upload / Print stops, the second goes on.
+- **Print notification:** Orca shows a notice when a print ends, pauses or fails (works while the WM Device tab is open).
+- The mapping window no longer freezes Orca while slicing.
+
 ## 0.24.14
 - Removed the Extrude / Retract buttons and the Home all button of the Controls panel (the Home circle in the move pad stays).
 

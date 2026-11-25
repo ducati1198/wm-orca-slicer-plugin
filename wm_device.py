@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.24.14"
+# version = "0.25.6"
 # ///
 """WM Device v0.6.
 
@@ -225,6 +225,63 @@ def known_hosts():
         return []
 
 
+def _trace(msg):
+    """Breadcrumbs of the slicing step in plugin_data/wm_device/trace.log (to see where Orca stops if it hangs). Never raises."""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        d = os.path.join(root, "plugin_data", "wm_device")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "trace.log"), "a", encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _mem_file():
+    # Found from this file's own path: orca.host.plugin.storage() must not be called from the slicing step (it can freeze Orca).
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(root, "plugin_data", "wm_device", "map_memory.json")
+
+
+def mem_key(name, nfil):
+    """Project key: the file name without the time estimate Orca adds (OrcaCube_PLA_47m48s.gcode -> orcacube_pla) + filament count."""
+    stem = os.path.basename(str(name or ""))
+    for ext in (".3mf", ".gcode", ".bgcode"):
+        while stem.lower().endswith(ext):
+            stem = stem[:-len(ext)]
+    # drop the time estimate wherever it sits (47m49s, 1h20m5s, 2d3h ...), so the key stays the same when the estimate changes
+    stem = re.sub(r"[_ -]*(?<![A-Za-z0-9])(?=\d+[dhms])(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?(?![A-Za-z0-9])", "", stem)
+    stem = re.sub(r"[_ -]{2,}", "_", stem).strip("_ -").lower()
+    return "%s|%d" % (stem or "project", int(nfil))
+
+
+def mem_load(key):
+    try:
+        with open(_mem_file(), "r", encoding="utf-8") as fh:
+            v = json.load(fh).get(key)
+        return clean_map(v) if v else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def mem_save(key, mapping):
+    try:
+        path = _mem_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:  # noqa: BLE001
+            data = {}
+        data[key] = list(mapping)
+        if len(data) > 200:
+            data = dict(list(data.items())[-200:])
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _forgot_file():
     return os.path.join(os.path.dirname(_hosts_file()), "forgotten.json")
 
@@ -359,7 +416,8 @@ class Poller:
                 if not base:
                     time.sleep(POLL_S)
                     continue
-                if self.objects is None:
+                if self.objects is None or self.tick % 20 == 19 or (self.objects and "extruder" not in self.objects):
+                    # re-read the object list now and then: if it was read while Klipper was restarting it misses the toolheads
                     listing = http_json(base + "/printer/objects/list")["result"]["objects"]
                     self.objects = [o for o in WANT if o in listing]
                     try:
@@ -675,7 +733,7 @@ button.danger:hover:not(:disabled){background:#d9534f;border-color:#d9534f;color
 .kv{display:flex;justify-content:space-between;padding:3px 0}
 .acegrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.acecard{background:var(--panel);border-radius:10px;padding:12px 14px}.acecap{font-weight:600;margin-bottom:6px}
 .acewarn{background:rgba(255,122,117,.16);border:1px solid var(--red);border-radius:10px;padding:10px 14px;margin-bottom:10px;font-weight:600}
-.cam{display:block;width:100%;aspect-ratio:16/9;max-height:480px;object-fit:cover;background:#000}
+.cam{display:block;width:100%;height:auto;min-height:120px;max-height:560px;object-fit:contain;background:#000}
 .camwrap{padding:0}
 .camfoot{padding:5px 14px;border-top:1px solid var(--orca-border)}
 .err{color:#d33}.ok{color:var(--g)}
@@ -806,13 +864,13 @@ button.lnk{border:0;background:transparent;color:#4aa3ff;font-weight:600;letter-
 <div class="ni" id="n-files" onclick="showTab('files')">Files</div>
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px">v0.24.14</div></div>
+<div class="muted" style="padding:16px">v0.25.6</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
 <input id="addr" placeholder="printer address, e.g. 192.168.1.50"><button class="pri" onclick="connect()">Connect</button><button id="forget" onclick="forget()">Forget</button>
 <span id="conn" class="muted"></span><span id="state" class="state">-</span><span style="flex:1"></span>
-<button id="camBtn" onclick="toggleCam()">Hide camera</button></div>
+<button onclick="refreshCam()">Refresh camera</button> <button id="camBtn" onclick="toggleCam()">Hide camera</button></div>
 <div id="err" class="err"></div>
 <div id="klip" class="panel" style="display:none;border-color:#d33;padding:10px 14px"></div>
 <div id="toast"></div>
@@ -957,9 +1015,11 @@ function addOpt(a){if(!a)return;var s=$("preset");for(var i=0;i<s.options.length
 function connect(){FIRST=true;var a=$("addr").value.trim();addOpt(a);syncPreset(a);try{localStorage.setItem("wmdev_addr",a);var L=JSON.parse(localStorage.getItem("wmdev_addrs")||"[]");if(a&&L.indexOf(a)<0){L.push(a);localStorage.setItem("wmdev_addrs",JSON.stringify(L.slice(-8)))}}catch(e){}
   $("conn").textContent="connecting...";orca.postMessage({type:"connect",addr:a})}
 function toggleCam(){camOn=!camOn;$("camBox").style.display=camOn?"block":"none";$("camBtn").textContent=camOn?"Hide camera":"Show camera";setCam()}
+function refreshCam(){if(!camOn)toggleCam();var img=$("cam");img.removeAttribute("src");CAMBUST=Date.now();setTimeout(setCam,200)}
+var CAMBUST=0;
 function setCam(){var img=$("cam");if(!camOn||!BASE){img.removeAttribute("src");return}
   var u=(CAMS[0]&&CAMS[0].stream_url)||"/webcam/?action=stream";var host=BASE.replace(/:\d+$/,"");
-  var url=u.indexOf("http")==0?u:host+u;$("camMsg").textContent=url;img.onerror=function(){$("camMsg").textContent="camera did not load: "+url};img.src=url}
+  var url=u.indexOf("http")==0?u:host+u;if(CAMBUST)url+=(url.indexOf("?")>=0?"&":"?")+"_t="+CAMBUST;$("camMsg").textContent=url;img.onerror=function(){$("camMsg").textContent="camera did not load: "+url};img.src=url}
 var SPM={1:"PLA",2:"PLA+",3:"PLA Silk",4:"PLA Matte",5:"PLA-CF",6:"PETG",7:"PETG-CF",8:"ABS",9:"ASA",10:"TPU",11:"PA",12:"PC",13:"PVA",14:"HIPS",15:"PLA Metal"};
 var SPC=[["White","FFFFFF"],["Beige","F3E8C8"],["Brown","9A6738"],["Grey","C7D5DF"],["Black","000000"],["Cyan","00DDE3"],["Light blue","13A7E8"],["Dark blue","0B4BD8"],["Light green","16E900"],["Dark green","00A84F"],["Yellow","FFF200"],["Orange","FF5A1F"],["Light pink","DDBFDE"],["Magenta","E72DBE"],["Red","FF1C2E"],["Bright blue","006EFF"],["Gold","D9A520"],["Copper","B86B44"],["Silver","AFC0CC"],["Multicolour","C060C0"],["Clear","D5E8EE"]];
 var SPI=0,SLOTS=[];
@@ -1312,6 +1372,7 @@ body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:0;background:#1
 .h.sel{background:#2b4a70;border-color:#4a90e2}.h.off{opacity:.4;cursor:default}
 .h i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:middle;border:1px solid #777}
 .st{width:66px;flex:none;font-weight:700;font-size:13px;text-align:right}
+.mw.bad{background:#5a1f22;color:#ff9a9a;border:1px solid #c0392b;font-weight:700}
 .mw{background:#4a3b1c;color:#f0c060;padding:9px 12px;border-radius:6px;font-size:13px;margin:6px 20px}
 #foot{display:flex;gap:10px;padding:14px 20px;border-top:1px solid #353a40;align-items:center;margin-top:8px}
 #foot span{flex:1;color:#9aa4ad;font-size:12px}
@@ -1338,7 +1399,7 @@ function calc(){var res=ROWS.map(function(){return-1}),used={};
   pairs.sort(function(a,b){return a.d-b.d});pairs.forEach(function(p){if(res[p.i]<0&&!used[p.h]){res[p.i]=p.h;used[p.h]=1}});
   ROWS.forEach(function(f,i){if(res[i]>=0)return;var b=-1,bd=1e9;H.forEach(function(h){if(h.loaded===false)return;var d=cdist(f.colour,h.colour);if(d<bd){bd=d;b=h.i}});res[i]=b>=0?b:i});return res}
 function auto(){var r=calc();ROWS.forEach(function(f,i){MAP[i]=r[i]});draw()}
-function pick(i,h){if(H[h]&&H[h].loaded===false)return;var old=MAP[i];for(var j=0;j<ROWS.length;j++){if(j!==i&&MAP[j]===h){MAP[j]=old;break}}MAP[i]=h;draw()}
+function pick(i,h){if(H[h]&&H[h].loaded===false)return;var old=MAP[i];for(var j=0;j<ROWS.length;j++){if(j!==i&&MAP[j]===h){MAP[j]=old;break}}MAP[i]=h;CONF=false;draw()}
 function draw(){var users={},warn=[],h="";ROWS.forEach(function(f,i){users[MAP[i]]=(users[MAP[i]]||0)+1});
   ROWS.forEach(function(f,i){var hd=H[MAP[i]]||{},ok=hd.loaded!==false&&sameMat(f.type,hd.mat)&&cdist(f.colour,hd.colour)<=300;
     if(!ok)warn.push(hd.loaded===false?"Toolhead "+(MAP[i]+1)+" is empty: load filament before printing filament "+(i+1)+".":"Filament "+(i+1)+" ("+cname(f.colour)+" "+(f.type||"")+") does not match toolhead "+(MAP[i]+1)+" ("+(hd.colour?cname(hd.colour):"no colour")+" "+(hd.mat||"")+"). Pick another or send anyway.");
@@ -1354,10 +1415,13 @@ function svt(){var e=$("sv");if(e.style.display==="block"){e.style.display="none
 function sv(){var n=($("nm").value||"").replace(/[<>"']/g,"").trim();if(!n)return;SAVED[n]=MAP.slice(0,4);store();$("sv").style.display="none"}
 function ld(i){var v=SAVED[Object.keys(SAVED)[i]];if(v&&v.length===4){MAP=v.slice();draw()}$("sv").style.display="none"}
 function dl(i){delete SAVED[Object.keys(SAVED)[i]];store();$("sv").style.display="none"}
-function done(a){orca.submit({action:a,map:MAP.slice(0,4)})}
+var CONF=false;
+function badMat(){var o=[];ROWS.forEach(function(f,i){var hd=H[MAP[i]]||{};if(hd.loaded!==false&&f.type&&hd.mat&&!sameMat(f.type,hd.mat))o.push("Filament "+(i+1)+" is "+f.type+" but toolhead "+(MAP[i]+1)+" has "+hd.mat)});return o}
+function done(a){if((a==="upload"||a==="print")&&!CONF){var b=badMat();if(b.length){CONF=true;$("warn").innerHTML='<div class="mw bad">&#9888; Different material: '+esc(b.join("; "))+'. Press the button again to continue anyway, or pick another toolhead.</div>'+$("warn").innerHTML;return}}
+  orca.submit({action:a,map:MAP.slice(0,4)})}
 $("sub").textContent=D.file+" · "+ROWS.length+" filament"+(ROWS.length===1?"":"s")+" · printer "+D.host;
 $("note").textContent=D.note||"";
-auto();
+(function(){var m=D.mem;if(m&&m.length===4&&ROWS.length&&m.every(function(v){return v>=0&&v<4&&!(H[v]&&H[v].loaded===false)})){MAP=m.slice();draw();$("note").textContent="Map from the last print of this project";}else auto()})();
 </script></body></html>"""
 
 
@@ -1384,8 +1448,8 @@ def fetch_heads(base):
     return heads, cur, ""
 
 
-def popup_html(fils, heads, cur, filename, host, note=""):
-    data = {"fils": fils[:HEADS], "heads": heads, "cur": cur, "map": cur, "file": os.path.basename(filename), "host": host, "note": note}
+def popup_html(fils, heads, cur, filename, host, note="", remembered=None):
+    data = {"mem": remembered, "fils": fils[:HEADS], "heads": heads, "cur": cur, "map": cur, "file": os.path.basename(filename), "host": host, "note": note}
     pal = [[n, "#%06X" % v] for n, v in TOUCH_PALETTE]
     safe = lambda o: json.dumps(o).replace("</", "<\\/")  # noqa: E731
     return POPUP.replace("__DATA__", safe(data)).replace("__PAL__", safe(pal))
@@ -1410,8 +1474,20 @@ def ui_dialog(ui, html, title, width, height, timeout=900):
     def on_close(*_a):
         ev.set()
 
-    win = ui.create_window(html, title, int(width), int(height), None, on_close, ui.WINDOW_MODAL, on_submit)
+    try:
+        _trace("thread=%s main=%s ui_names=%s" % (threading.current_thread().name, threading.current_thread() is threading.main_thread(),
+               [n for n in dir(ui) if n.isupper() or "window" in n.lower() or "dialog" in n.lower()]))
+    except Exception as exc:  # noqa: BLE001
+        _trace("thread info error " + repr(exc))
+    _trace("create_window: calling (html %d bytes)" % len(html))
+    # Modeless: a modal window opened behind Orca's main window blocks all clicks and Orca looks frozen. Modeless keeps Orca usable.
+    style = getattr(ui, "WINDOW_MODELESS", None)
+    if style is None:
+        style = ui.WINDOW_MODAL
+    win = ui.create_window(html, title, int(width), int(height), None, on_close, style, on_submit)
+    _trace("create_window: returned, waiting for the user")
     ev.wait(timeout)
+    _trace("create_window: wait finished")
     try:
         win.close()
     except Exception:  # noqa: BLE001
@@ -1420,8 +1496,8 @@ def ui_dialog(ui, html, title, width, height, timeout=900):
 
 
 
-def slice_popup_html(fils, heads, cur, filename, host, note=""):
-    h = popup_html(fils, heads, cur, filename, host, note)
+def slice_popup_html(fils, heads, cur, filename, host, note="", remembered=None):
+    h = popup_html(fils, heads, cur, filename, host, note, remembered)
     h = h.replace("Send to printer: choose toolheads", "Sliced: choose toolheads for this print")
     h = h.replace('<button class="b pr" onclick="done(\'print\')">Upload and Print</button>', "")
     h = h.replace(">Upload</button>", ">Apply mapping</button>")
@@ -1441,6 +1517,10 @@ def apply_tool_map(path, mapping, name, native=False):
 
 def ask_tool_map(path, name, ui=None):
     """Popup shown when slicing finishes. Returns (mapping or None, message)."""
+    _trace("ask_tool_map start %s thread=%s main=%s" % (name, threading.current_thread().name, threading.current_thread() is threading.main_thread()))
+    if threading.current_thread() is threading.main_thread():
+        _trace("main thread: popup skipped (waiting here would freeze Orca)")
+        return None, "popup skipped: the export step runs on Orca's main thread"
     ui = ui or orca.host.ui
     base = MAPSTATE.get("base") or ""
     if not base:
@@ -1448,14 +1528,24 @@ def ask_tool_map(path, name, ui=None):
     note = ""
     while True:
         try:
+            _trace("fetch_heads")
             heads, cur, _ = fetch_heads(base)
         except Exception as exc:  # noqa: BLE001
+            _trace("fetch_heads error " + repr(exc))
             return None, "printer not reachable: " + repr(exc)
+        _trace("read_orca_filaments")
         fils, ferr = read_orca_filaments()
+        _trace("filaments done " + str(ferr)[:80])
         if ferr:
             note = "Orca filaments not available: showing the printer's own tools"
-        res = ui_dialog(ui, slice_popup_html(fils, heads, cur, name, base.replace("http://", "").replace(":7125", ""), note),
-                             "WM Device: tool mapping", 860, 640)
+        key = mem_key(name, len(fils) or HEADS)
+        _trace("mem_load " + key)
+        mem = mem_load(key)
+        _trace("building popup html")
+        page = slice_popup_html(fils, heads, cur, name, base.replace("http://", "").replace(":7125", ""), note, mem)
+        _trace("popup html built")
+        res = ui_dialog(ui, page, "WM Device: tool mapping", 860, 640)
+        _trace("dialog returned " + str((res or {}).get("action")))
         act = (res or {}).get("action")
         if act == "sync":
             note = "Synced from the printer"
@@ -1464,7 +1554,10 @@ def ask_tool_map(path, name, ui=None):
             return None, "skipped"
         if act not in ("upload", "print"):
             return None, "cancelled"
-        return clean_map((res or {}).get("map")), "ok"
+        got = clean_map((res or {}).get("map"))
+        if got:
+            mem_save(key, got)
+        return got, "ok"
 
 
 class WmAbort(RuntimeError):
@@ -1508,6 +1601,7 @@ if _SlicingBase is not None:
 
         def execute(self, ctx):
             path = getattr(ctx, "gcode_path", "") or ""
+            _trace("execute step=" + str(getattr(ctx, "step", "")) + " base=" + str(MAPSTATE.get("base")))
             try:
                 if ctx.step != orca.slicing.Step.psGCodePostProcess or not path:
                     return orca.ExecutionResult.success()
@@ -1565,6 +1659,21 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
         except Exception:  # noqa: BLE001
             pass
 
+    def _notify_state(self):
+        """Orca notification when a print ends, pauses or fails (state change seen by the poller). Never raises."""
+        try:
+            st = self.poller.print_state
+            old = getattr(self, "_last_state", None)
+            self._last_state = st
+            if old == "printing" and st in ("complete", "error", "cancelled", "standby", "paused"):
+                lvl = orca.host.ui.NotificationLevel
+                level = getattr(lvl, "RegularNotificationLevel", None) if st == "complete" else getattr(lvl, "WarningNotificationLevel", None)
+                if level is None:
+                    return
+                orca.host.ui.push_notification(level, "WM Device: print " + ("finished" if st == "complete" else st))
+        except Exception:  # noqa: BLE001
+            pass
+
     def on_message(self, message):
         try:
             if not isinstance(message, dict):
@@ -1598,6 +1707,7 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
             elif kind == "ping":
                 if self.poller is not None:
                     self.poller.beat()
+                    self._notify_state()
             elif kind == "orcafils":
                 fils, err = read_orca_filaments()
                 self._post({"type": "orcafils", "fils": fils, "err": err})

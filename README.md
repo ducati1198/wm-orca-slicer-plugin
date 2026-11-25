@@ -43,12 +43,14 @@ Details:
 | A **WM Device** tab in OrcaSlicer | Status, Files, History and Messages pages for a Moonraker printer |
 | Live status | State, active nozzle, bed and chamber temperatures with small trend graphs, position, homed axes, fans, speed factor, idle timeout |
 | Four toolheads | Colour and material of each spool, edit a spool and save it to the printer |
-| Print progress and the camera | Progress ring, **Pause**, **Resume**, **Stop** (asks first), and the printer's camera |
+| Print progress and the camera | Progress ring, **Pause**, **Resume**, **Stop** (asks first), and the printer's camera (full picture, with a **Refresh camera** button) |
 | Controls | Set a temperature, fans, speed factor, move the toolhead, light, cool down |
 | Files and History | Start a print from the printer's file list (asks first), the print history |
 | Messages | Errors and warnings from the printer's console, grouped |
 | ACE Pro panel | Shown only when the printer has an ACE Pro: slots, drying, endless spool |
 | **WM Tool Map** slicing step | After slicing, shows the filaments of the file and the four toolheads, and writes your choice into the G-code |
+| **Remembered map and material warning** | The tool map is remembered per project and filled in next time; a red warning shows when a filament does not match the loaded spool |
+| **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
 | One printer list | Saved addresses with a **Forget** button; the printer addresses are never written in the plugin |
 
