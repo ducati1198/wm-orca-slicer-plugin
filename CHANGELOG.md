@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.26.1
+- Fixed: after installing from **Orca Cloud** the plugin never asked for network permission. The saved printer list is now kept in the plugin's own data folder and in Orca's storage folder, and both are read when the plugin loads. A line in `trace.log` shows which printers were requested.
+- README and Orca Cloud page: install from Orca Cloud, and how to add a printer by hand in **File > Plugins > Permissions > Network access** when Orca shows no dialog.
+
+## 0.26.0
+- **Files page:** a picture of each part, its filament colours and weight. **Print** now opens the tool mapping window first and then starts the print (or **Print without map**).
+- New **Style** button: current look, or two modern dark styles.
+- **Home Z** and **Motors off** buttons in the Move section (not while printing).
+- **Endless spool** and **Filament in the file** panels side by side; tighter layout.
+- Orca notices when the connection to the printer is lost or comes back, and when Klipper reports an error or shutdown.
+- The trace log is kept to a small size.
+
 ## 0.25.6
 - **Camera** now shows the whole picture (like Fluidd) instead of a cropped one.
 - New **Refresh camera** button next to Hide camera: reloads the stream and turns the camera back on.

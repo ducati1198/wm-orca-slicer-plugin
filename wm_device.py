@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.25.6"
+# version = "0.26.1"
 # ///
 """WM Device v0.6.
 
@@ -204,25 +204,60 @@ def _host_of(base):
     return str(base or "").replace("https://", "").replace("http://", "").split("/")[0].split(":")[0]
 
 
-def _hosts_file():
-    """hosts.json in the plugin data folder. orca.host.plugin.storage() only works inside a plugin callback, not while the
-    plugin loads, so at load the same folder is found from this file's own path (orca_plugins/<name>/<file> ->
-    orca_plugins/plugin_data/wm_device)."""
+def _own_dir():
+    """plugin_data/wm_device found from this file's own path. This is the folder that is readable while the plugin
+    loads, so the printer list must always be kept here (a Cloud install can have a different storage() folder)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(root, "plugin_data", "wm_device")
+
+
+def _hosts_files():
+    """Every folder that may hold hosts.json: this file's own plugin_data first, then Orca's storage() when it works."""
+    out = [os.path.join(_own_dir(), "hosts.json")]
     try:
-        return os.path.join(str(orca.host.plugin.storage()), "hosts.json")
+        alt = os.path.join(str(orca.host.plugin.storage()), "hosts.json")
+        if alt not in out:
+            out.append(alt)
     except Exception:  # noqa: BLE001
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(root, "plugin_data", "wm_device", "hosts.json")
+        pass
+    return out
 
 
-def known_hosts():
-    """Printer hosts this plugin has connected to before (kept in the plugin's own data folder)."""
+def _hosts_file():
+    return _hosts_files()[0]
+
+
+def _read_hosts_from(fp):
     try:
-        with open(_hosts_file(), "r", encoding="utf-8") as fh:
+        with open(fp, "r", encoding="utf-8") as fh:
             return [h for h in json.load(fh) if isinstance(h, str) and h]
     except Exception as exc:  # noqa: BLE001
         PERM["err"] = repr(exc)[:160]
         return []
+
+
+def _write_hosts(hosts):
+    """Save the list in every folder that can be written, so the load-time read always finds it."""
+    done = False
+    for fp in _hosts_files():
+        try:
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            with open(fp, "w", encoding="utf-8") as fh:
+                json.dump(hosts[-12:], fh)
+            done = True
+        except Exception:  # noqa: BLE001
+            pass
+    return done
+
+
+def known_hosts():
+    """Printer hosts this plugin has connected to before (union of every saved copy)."""
+    out = []
+    for fp in _hosts_files():
+        for h in _read_hosts_from(fp):
+            if h not in out:
+                out.append(h)
+    return out
 
 
 def _trace(msg):
@@ -231,7 +266,17 @@ def _trace(msg):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         d = os.path.join(root, "plugin_data", "wm_device")
         os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "trace.log"), "a", encoding="utf-8") as fh:
+        fp = os.path.join(d, "trace.log")
+        try:
+            if os.path.getsize(fp) > 60000:
+                with open(fp, "r", encoding="utf-8", errors="replace") as fh:
+                    keep = fh.read()[-20000:]
+                keep = keep[keep.find("\n") + 1:]
+                with open(fp, "w", encoding="utf-8") as fh:
+                    fh.write(keep)
+        except OSError:
+            pass
+        with open(fp, "a", encoding="utf-8") as fh:
             fh.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
     except Exception:  # noqa: BLE001
         pass
@@ -283,7 +328,7 @@ def mem_save(key, mapping):
 
 
 def _forgot_file():
-    return os.path.join(os.path.dirname(_hosts_file()), "forgotten.json")
+    return os.path.join(_own_dir(), "forgotten.json")
 
 
 def forgotten_hosts():
@@ -317,9 +362,7 @@ def remember_host(base, auto=False):
         hosts = known_hosts()
         if host not in hosts:
             hosts.append(host)
-            os.makedirs(os.path.dirname(_hosts_file()), exist_ok=True)
-            with open(_hosts_file(), "w", encoding="utf-8") as fh:
-                json.dump(hosts[-12:], fh)
+            _write_hosts(hosts)
     except Exception:  # noqa: BLE001
         pass
 
@@ -329,8 +372,7 @@ def forget_host(base):
     host = _host_of(base)
     try:
         hosts = [h for h in known_hosts() if h != host]
-        with open(_hosts_file(), "w", encoding="utf-8") as fh:
-            json.dump(hosts, fh)
+        _write_hosts(hosts)
         _save_forgotten([h for h in forgotten_hosts() if h != host] + [host])
     except Exception:  # noqa: BLE001
         pass
@@ -358,8 +400,10 @@ def declare_permissions():
         PERM["ok"] = True
         PERM["hosts"] = set(hosts)
         PERM["req"] = "requested " + ", ".join(hosts)
+        _trace("permissions requested for [%s] from %s" % (", ".join(hosts), os.path.abspath(__file__)))
     except Exception as exc:  # noqa: BLE001
         PERM["req"] = "request failed: " + repr(exc)[:160]
+        _trace("permission request failed: " + repr(exc)[:160])
         try:
             request(threading=True)
         except Exception:  # noqa: BLE001
@@ -380,6 +424,8 @@ class Poller:
         self.messages = []
         self.tick = 0
         self.print_state = ""
+        self.fails = 0
+        self.kstate = ""
         self.last = {}
         self.ping = 0.0
 
@@ -440,10 +486,13 @@ class Poller:
                 status = http_json(base + "/printer/objects/query?" + q)["result"]["status"]
                 self.last = status
                 self.print_state = (status.get("print_stats") or {}).get("state", "")
+                self.fails = 0
+                self.kstate = (status.get("webhooks") or {}).get("state", "")
                 self.post({"type": "state", "base": base, "status": status, "time": time.time(), "cams": self.cams,
                            "slots": merge_saved(self.slots, status), "messages": self.messages})
             except Exception as exc:  # noqa: BLE001
                 self.objects = None
+                self.fails += 1
                 self.post({"type": "error", "base": base, "text": repr(exc)})
             self.stop.wait(POLL_S)
 
@@ -454,8 +503,92 @@ class Poller:
             rows = sorted(rows, key=lambda r: r.get("modified", 0), reverse=True)[:25]
             self.post({"type": "files", "files": [{"path": r["path"], "size": r.get("size", 0),
                                                    "modified": r.get("modified", 0)} for r in rows]})
+            threading.Thread(target=self.file_meta, daemon=True, args=([r["path"] for r in rows],)).start()
         except Exception as exc:  # noqa: BLE001
             self.post({"type": "result", "ok": False, "text": "file list: " + repr(exc)})
+
+    def file_meta(self, paths):
+        """Part picture, filament colours and weight of each listed file (read only, from Moonraker's file data)."""
+        base, out = self.base, {}
+        for n, path in enumerate(paths):
+            try:
+                md = http_json(base + "/server/files/metadata?filename=" + urllib.parse.quote(path, safe=""), timeout=6)["result"]
+                th, best = "", 0
+                for t in md.get("thumbnails") or []:
+                    w = int(t.get("width") or 0)
+                    if best < w <= 300 and t.get("relative_path"):
+                        best = w
+                        folder = os.path.dirname(path)
+                        th = base + "/server/files/gcodes/" + urllib.parse.quote((folder + "/" if folder else "") + t["relative_path"], safe="/")
+                cols = [str(c) for c in (md.get("filament_colors") or md.get("extruder_colors") or [])][:HEADS]
+                wts = md.get("filament_weights") or []
+                out[path] = {"c": cols, "u": [(float(wts[i]) > 0) if i < len(wts) else True for i in range(len(cols))],
+                             "g": md.get("filament_weight_total") or 0, "h": md.get("estimated_time") or 0, "th": th}
+            except Exception:  # noqa: BLE001
+                pass
+            if base != self.base:
+                return
+            if out and (n % 5 == 4 or n == len(paths) - 1):
+                self.post({"type": "filemeta", "meta": out})
+                out = {}
+
+    def print_with_map(self, filename):
+        """Print from the file list: open the tool mapping window for the filaments of that file, write the map, start the print."""
+        try:
+            if self.print_state not in ("standby", "complete", "cancelled", "error"):
+                self.post({"type": "result", "ok": False, "text": f"start: not possible while the printer is '{self.print_state}'"})
+                return
+            if not filename or ".." in filename:
+                raise ValueError("no file name")
+            md = http_json(self.base + "/server/files/metadata?filename=" + urllib.parse.quote(filename, safe=""), timeout=8)["result"]
+
+            def as_list(v):
+                if isinstance(v, str):
+                    try:
+                        v = json.loads(v)
+                    except Exception:  # noqa: BLE001
+                        v = [v]
+                return list(v) if isinstance(v, (list, tuple)) else []
+
+            cols = as_list(md.get("filament_colors") or md.get("extruder_colors"))
+            types, names, wts = as_list(md.get("filament_type")), as_list(md.get("filament_name")), as_list(md.get("filament_weights"))
+            n = min(len(cols), HEADS)
+            if n == 0:
+                self.post({"type": "result", "ok": True, "text": "no filament information in this file: printing without a tool map"})
+                self.command("start", filename)
+                return
+            fils = []
+            for i in range(n):
+                nm = str(names[i]) if i < len(names) else ""
+                if i < len(wts) and float(wts[i]) <= 0:
+                    nm = (nm + " (not used)").strip()
+                fils.append({"index": i, "colour": str(cols[i]), "type": str(types[i]) if i < len(types) else "", "name": nm})
+            host = self.base.replace("http://", "").replace(":7125", "")
+            key = mem_key(filename, n)
+            note = ""
+            while True:
+                heads, cur, _ = fetch_heads(self.base)
+                page = file_popup_html(fils, heads, cur, filename, host, note, mem_load(key))
+                self.post({"type": "result", "ok": True, "text": "mapping window opened for " + os.path.basename(filename)})
+                res = ui_dialog(orca.host.ui, page, "WM Device: print with tool mapping", 860, 640)
+                act = (res or {}).get("action")
+                if act == "sync":
+                    note = "Synced from the printer"
+                    continue
+                break
+            if act == "skip":
+                self.command("start", filename)
+                return
+            if act != "print":
+                self.post({"type": "result", "ok": False, "text": "print cancelled: nothing was sent"})
+                return
+            got = clean_map((res or {}).get("map"))
+            if got:
+                mem_save(key, got)
+                self.action({"kind": "toolmap", "map": got})
+            self.command("start", filename)
+        except Exception as exc:  # noqa: BLE001
+            self.post({"type": "result", "ok": False, "text": "print with map: " + repr(exc)})
 
     def history(self):
         try:
@@ -519,6 +652,14 @@ class Poller:
                 if state in ("printing", "paused"):
                     raise ValueError("not while printing")
                 script, text = "G28", "home all axes"
+            elif kind == "homez":
+                if state in ("printing", "paused"):
+                    raise ValueError("not while printing")
+                script, text = "G28 Z", "home Z"
+            elif kind == "motoroff":
+                if state in ("printing", "paused"):
+                    raise ValueError("not while printing")
+                script, text = "M84", "motors off"
             elif kind == "cooldown":
                 script, text = "TURN_OFF_HEATERS", "all heaters off"
             elif kind == "light":
@@ -616,7 +757,7 @@ class Poller:
             else:
                 raise ValueError("unknown control")
             # Moonraker answers a gcode POST only when the command has finished, so homing and moves need minutes.
-            tmo = 240 if kind in ("home", "move", "extrude", "endless_go") else 20
+            tmo = 240 if kind in ("home", "homez", "move", "extrude", "endless_go") else 20
             note = ""
             if kind == "light" and "gcode_macro WM_CHAMBER_LIGHT" not in (self.last or {}):
                 raise ValueError("this printer has no WM_CHAMBER_LIGHT macro (factory firmware): use the printer's own light switch")
@@ -858,17 +999,57 @@ button.lnk{border:0;background:transparent;color:#4aa3ff;font-weight:600;letter-
 .mmap{width:100%;height:190px}.mcol{display:flex;justify-content:space-between;max-width:640px;margin:0 auto;font-size:11px;letter-spacing:.08em;color:var(--orca-muted)}
 .fil2 .endrow{flex-direction:column;align-items:flex-start;gap:10px}.fil2 .chips{width:100%}.fil2 .chip{flex-wrap:wrap;gap:4px 6px}.mname b{white-space:nowrap}
 .fil2{margin-bottom:24px}.mname b{font-size:15px}.mst{font-size:11px}@media(min-width:620px){.mheads{grid-template-columns:repeat(4,minmax(0,1fr))}.mh small{display:block}}@media(min-width:900px){.mrow{flex-wrap:nowrap}.mname{flex:none;width:130px}.mheads{order:0;flex:1 1 auto}.mst{width:70px}}
+/* v0.26 layout A: tighter cards, more in one view; Files page with part pictures */
+#content{padding:14px 18px 20px}
+.panel{margin-bottom:10px}
+.panel>.ph{padding:12px 16px 0}
+.panel>.pb{padding:10px 16px 14px}
+.st,.two{gap:10px}
+.tgrid{gap:8px}
+.tcell{padding:8px 12px}
+#heads{gap:10px}
+.slot{padding:10px 8px 8px}
+.slot .spl{width:68px;height:68px}
+.slot .tl{margin-top:6px}
+.ring{width:92px;height:92px}.ring b{width:70px;height:70px;font-size:19px}
+.pr{gap:18px}
+.cam{max-height:420px}
+.mvbox{gap:18px}
+.frow{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:12px;background:var(--card2);margin-bottom:8px}
+.fth{width:64px;height:64px;flex:none;border-radius:10px;background:rgba(128,128,128,.18);object-fit:contain}
+.fmid{flex:1;min-width:0}
+.fname{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fdots{display:flex;gap:5px;margin-top:5px}
+.fdot{width:13px;height:13px;border-radius:50%;border:1px solid rgba(255,255,255,.25)}
+.frow button{min-width:74px}
+.fil2{grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:10px}.fil2>.panel{margin-bottom:0}
+/* v0.26 themes: Style button cycles Current / A bento graphite / B soft slate */
+body[data-th="a"]{--orca-bg:#0e1013;--orca-fg:#e8eaed;--orca-muted:#8b93a1;--orca-border:#262a33;--g:#2dd4a7;--panel:#14171c;--hd:#1b1f26;--card:#171a20;--card2:#1d2128;--shadow:none;--key:#1f232b;--keyh:#2a2f39;--keyb:#323744;--keyt:#e8eaed;--keyin:#12151a}
+body[data-th="a"] .panel{border:1px solid #262a33;border-radius:14px}
+body[data-th="a"] #nav{background:#0b0d10;border-right:1px solid #1c2027}
+body[data-th="a"] .ni.sel{background:rgba(45,212,167,.12);box-shadow:inset 3px 0 0 var(--g)}
+body[data-th="a"] .tcell,body[data-th="a"] .slot,body[data-th="a"] .acecard{border:1px solid #262a33}
+body[data-th="a"] button.pri,body[data-th="a"] .s-printing,body[data-th="a"] .seg span.on,body[data-th="a"] .chip.on,body[data-th="a"] .stp .go,body[data-th="a"] .b-ok{color:#06201a}
+body[data-th="b"]{--orca-bg:#1c1f26;--orca-fg:#eceef2;--orca-muted:#98a0b0;--orca-border:#2c313c;--g:#ff9a3d;--panel:#222630;--hd:#252932;--card:#252932;--card2:#2d323d;--shadow:none;--key:#303541;--keyh:#3b4150;--keyb:#303541;--keyt:#eceef2;--keyin:#20242c}
+body[data-th="b"] .panel{border:0;border-radius:20px}
+body[data-th="b"] #nav{background:#181b21;border-right:0}
+body[data-th="b"] .ni{border-radius:999px}
+body[data-th="b"] .ni.sel{background:rgba(255,154,61,.16)}
+body[data-th="b"] button,body[data-th="b"] input,body[data-th="b"] select{border-radius:999px}
+body[data-th="b"] .tcell,body[data-th="b"] .slot,body[data-th="b"] .acecard{border-radius:18px;border-color:transparent}
+body[data-th="b"] button.pri,body[data-th="b"] .s-printing,body[data-th="b"] .seg span.on,body[data-th="b"] .chip.on,body[data-th="b"] .stp .go,body[data-th="b"] .b-ok{color:#2b1700}
+body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 </style></head><body>
 <div id="nav"><div id="navName"><span class="dot off" id="navDot"></span><span id="navTxt">WM Device</span></div>
 <div class="ni sel" id="n-status" onclick="showTab('status')">Status</div>
 <div class="ni" id="n-files" onclick="showTab('files')">Files</div>
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px">v0.25.6</div></div>
+<div class="muted" style="padding:16px">v0.26.1</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
-<input id="addr" placeholder="printer address, e.g. 192.168.1.50"><button class="pri" onclick="connect()">Connect</button><button id="forget" onclick="forget()">Forget</button>
+<input id="addr" placeholder="printer address, e.g. 192.168.1.50"><button class="pri" onclick="connect()">Connect</button><button id="forget" onclick="forget()">Forget</button><button id="thBtn" onclick="cycleTheme()">Style: Current</button>
 <span id="conn" class="muted"></span><span id="state" class="state">-</span><span style="flex:1"></span>
 <button onclick="refreshCam()">Refresh camera</button> <button id="camBtn" onclick="toggleCam()">Hide camera</button></div>
 <div id="err" class="err"></div>
@@ -933,7 +1114,7 @@ button.lnk{border:0;background:transparent;color:#4aa3ff;font-weight:600;letter-
 <text x="85" y="33" text-anchor="middle">Y+</text><text x="143" y="90" text-anchor="middle">X+</text><text x="85" y="152" text-anchor="middle">Y-</text><text x="27" y="90" text-anchor="middle">X-</text><text x="85" y="90" text-anchor="middle" style="fill:#fff;font-size:12px">Home</text></svg>
 <div><div class="mvcap">Z axis</div><div class="mvcol"><div class="k" onclick="mv('z',1)" style="height:52px">&#9650; Z+</div><div class="k" onclick="mv('z',-1)" style="height:52px">&#9660; Z-</div></div></div>
 
-<div><div class="mvcap">Step (mm)</div><div class="seg" id="mvStep"><span onclick="setStep(1)">1</span><span class="on" onclick="setStep(10)">10</span><span onclick="setStep(50)">50</span></div><div class="k" id="btnLight" onclick="act({kind:'light'})" style="margin-top:12px">Light</div></div>
+<div><div class="mvcap">Step (mm)</div><div class="seg" id="mvStep"><span onclick="setStep(1)">1</span><span class="on" onclick="setStep(10)">10</span><span onclick="setStep(50)">50</span></div><div class="k" id="btnLight" onclick="act({kind:'light'})" style="margin-top:12px">Light</div><div class="k" onclick="doAct({kind:'homez'},'Home Z? The toolhead will move.')" style="margin-top:8px">Home Z</div><div class="k" onclick="doAct({kind:'motoroff'},'Motors off?')" style="margin-top:8px">Motors off</div></div>
 </div><div class="muted" style="margin-top:10px">Moves apply at once. Not while printing. Z+ and Z- are the printer's Z coordinate.</div><div class="pm"><div><small>X / Y / Z</small><span id="pos">-</span></div><div><small>Homed</small><span id="homed">-</span></div><div><small>Idle timeout</small><span id="idle">-</span></div><div><small>Extrusion factor</small><span id="ext">-</span></div></div></div></div>
 <div class="panel"><div class="ph">Controls</div><div class="pb cx cxrow">
 <div class="cxc"><div class="cxl">Temperature</div>
@@ -1014,6 +1195,10 @@ reqFils();setInterval(reqFils,6000);
 function addOpt(a){if(!a)return;var s=$("preset");for(var i=0;i<s.options.length;i++){if(s.options[i].value===a)return}var o=document.createElement("option");o.value=a;o.textContent=a;s.insertBefore(o,s.options[s.options.length-1])}
 function connect(){FIRST=true;var a=$("addr").value.trim();addOpt(a);syncPreset(a);try{localStorage.setItem("wmdev_addr",a);var L=JSON.parse(localStorage.getItem("wmdev_addrs")||"[]");if(a&&L.indexOf(a)<0){L.push(a);localStorage.setItem("wmdev_addrs",JSON.stringify(L.slice(-8)))}}catch(e){}
   $("conn").textContent="connecting...";orca.postMessage({type:"connect",addr:a})}
+var THN=["","a","b"],THL=["Current","A bento graphite","B soft slate"];
+function setTheme(i){document.body.setAttribute("data-th",THN[i]);var bt=$("thBtn");if(bt)bt.textContent="Style: "+THL[i];try{localStorage.setItem("wmth",String(i))}catch(e){}}
+function cycleTheme(){var i=0;try{i=parseInt(localStorage.getItem("wmth")||"0")}catch(e){}if(!(i>=0))i=0;setTheme((i+1)%3)}
+(function(){var i=0;try{i=parseInt(localStorage.getItem("wmth")||"0")}catch(e){}if(i>0)setTimeout(function(){setTheme(i)},0)})();
 function toggleCam(){camOn=!camOn;$("camBox").style.display=camOn?"block":"none";$("camBtn").textContent=camOn?"Hide camera":"Show camera";setCam()}
 function refreshCam(){if(!camOn)toggleCam();var img=$("cam");img.removeAttribute("src");CAMBUST=Date.now();setTimeout(setCam,200)}
 var CAMBUST=0;
@@ -1060,7 +1245,16 @@ function ask(cmd){
   else send(cmd)}
 function send(cmd,file){$("res").className="muted";$("res").textContent="sending "+cmd+"...";orca.postMessage({type:"command",name:cmd,file:file||""})}
 function loadFiles(){$("files").textContent="loading...";orca.postMessage({type:"files"})}
-function printFile(f){send("start",f)}
+function printFile(f){$("res").className="muted";$("res").textContent="opening the mapping window...";orca.postMessage({type:"printfile",file:f})}
+var FROWS=[],FMETA={};
+function fmtDur(t){var h=Math.floor(t/3600),m=Math.round((t%3600)/60);return (h?h+"h ":"")+m+"m"}
+function renderFiles(){var h="";FROWS.forEach(function(f){var mt=FMETA[f.path]||{};var d=new Date(f.modified*1000).toLocaleDateString()+" · "+(f.size/1048576).toFixed(1)+" MB";
+  if(mt.h)d+=" · "+fmtDur(mt.h);if(mt.g)d+=" · "+Math.round(mt.g)+" g";
+  var th=mt.th?'<img class="fth" src="'+esc(mt.th)+'" onerror="this.style.visibility=\'hidden\'">':'<div class="fth"></div>';
+  var dots=(mt.c||[]).map(function(c,i){var u=!mt.u||mt.u[i];return '<span class="fdot" style="background:'+esc(c)+(u?"":";opacity:.25")+'"></span>'}).join("");
+  h+='<div class="frow">'+th+'<div class="fmid"><div class="fname">'+esc(f.path)+'</div><div class="muted">'+d+'</div><div class="fdots">'+dots+'</div></div><button class="pri" '+((STATE==="printing"||STATE==="paused")?"disabled":"")+' data-f="'+esc(f.path)+'">Print</button></div>'});
+  $("files").innerHTML=h||"no files in gcodes";
+  Array.prototype.forEach.call($("files").querySelectorAll("button"),function(b){b.onclick=function(){printFile(b.getAttribute("data-f"))}})}
 function ink(c){var m=/^#?([0-9a-f]{6})$/i.exec(c||"");if(!m)return "#fff";var n=parseInt(m[1],16),r=n>>16,g=(n>>8)&255,b=n&255;return (0.299*r+0.587*g+0.114*b)>150?"#111":"#fff"}
 var TABS=["status","files","hist","msgs"];
 function showTab(n){TABS.forEach(function(k){$("v-"+k).style.display=k===n?"block":"none";$("n-"+k).className="ni"+(k===n?" sel":"")})}
@@ -1237,10 +1431,8 @@ orca.onMessage(function(m){
   if(m.type==="history"){var hh="";m.jobs.forEach(function(j){var c=j.status==="completed"?"ok":(j.status==="in_progress"?"muted":"err");
     hh+='<div class="file"><span>'+esc(j.file)+' <span class="muted">'+new Date(j.start*1000).toLocaleString()+' · '+tt(j.dur)+'</span></span><span class="'+c+'">'+esc(j.status)+'</span></div>'});
     $("hist").innerHTML=hh||(m.error?"history not available: "+esc(m.error):"no jobs yet")}
-  if(m.type==="files"){var h="";m.files.sort(function(a,b){return b.modified-a.modified});m.files.forEach(function(f){var d=new Date(f.modified*1000).toLocaleDateString()+" · "+(f.size/1048576).toFixed(1)+" MB";
-    h+='<div class="file"><span>'+esc(f.path)+' <span class="muted">'+d+'</span></span><button '+((STATE==="printing"||STATE==="paused")?"disabled":"")+' data-f="'+esc(f.path)+'">Print</button></div>'});
-    $("files").innerHTML=h||"no files in gcodes";
-    Array.prototype.forEach.call($("files").querySelectorAll("button"),function(b){b.onclick=function(){printFile(b.getAttribute("data-f"))}})}
+  if(m.type==="files"){FROWS=m.files;FROWS.sort(function(a,b){return b.modified-a.modified});renderFiles()}
+  if(m.type==="filemeta"){for(var fk in m.meta)FMETA[fk]=m.meta[fk];renderFiles()}
 });
 try{(JSON.parse(localStorage.getItem("wmdev_addrs")||"[]")).forEach(addOpt)}catch(e){}
 try{var a=localStorage.getItem("wmdev_addr");if(a){$("addr").value=a;addOpt(a);syncPreset(a);connect()}else{orca.postMessage({type:"defaults"})}}catch(e){}
@@ -1505,6 +1697,15 @@ def slice_popup_html(fils, heads, cur, filename, host, note="", remembered=None)
     return h
 
 
+def file_popup_html(fils, heads, cur, filename, host, note="", remembered=None):
+    h = popup_html(fils, heads, cur, filename, host, note, remembered)
+    h = h.replace("Send to printer: choose toolheads", "Print: choose toolheads for this file")
+    h = h.replace('<button class="b up" onclick="done(\'upload\')">Upload</button>', "")
+    h = h.replace(">Upload and Print</button>", ">Apply and print</button>")
+    h = h.replace('<button class="b" onclick="done(\'cancel\')">Cancel</button>', '<button class="b" onclick="done(\'cancel\')">Cancel</button><button class="b" onclick="done(\'skip\')">Print without map</button>', 1)
+    return h
+
+
 def apply_tool_map(path, mapping, name, native=False):
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -1659,6 +1860,32 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
         except Exception:  # noqa: BLE001
             pass
 
+    def _notify_more(self):
+        """Orca notices for a lost connection (3 failed reads in a row), the way back, and Klipper error/shutdown. Never raises."""
+        try:
+            p = self.poller
+            if p is None or not p.base:
+                return
+            lvl = orca.host.ui.NotificationLevel
+            warn = getattr(lvl, "WarningNotificationLevel", None)
+            reg = getattr(lvl, "RegularNotificationLevel", None)
+            if p.fails >= 3 and not getattr(self, "_lost", False):
+                self._lost = True
+                if warn is not None:
+                    orca.host.ui.push_notification(warn, "WM Device: connection to the printer lost")
+            elif p.fails == 0 and getattr(self, "_lost", False):
+                self._lost = False
+                if reg is not None:
+                    orca.host.ui.push_notification(reg, "WM Device: connection to the printer is back")
+            ks = p.kstate if p.fails == 0 else ""
+            old = getattr(self, "_kst", "")
+            if ks and ks != old:
+                self._kst = ks
+                if ks in ("error", "shutdown") and warn is not None:
+                    orca.host.ui.push_notification(warn, "WM Device: Klipper is " + ks)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _notify_state(self):
         """Orca notification when a print ends, pauses or fails (state change seen by the poller). Never raises."""
         try:
@@ -1708,6 +1935,7 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                 if self.poller is not None:
                     self.poller.beat()
                     self._notify_state()
+                    self._notify_more()
             elif kind == "orcafils":
                 fils, err = read_orca_filaments()
                 self._post({"type": "orcafils", "fils": fils, "err": err})
@@ -1716,6 +1944,8 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                 MAPSTATE["map"] = clean_map(message.get("map"))
             elif self.poller is None or not self.poller.base:
                 return
+            elif kind == "printfile":
+                threading.Thread(target=self.poller.print_with_map, daemon=True, args=(str(message.get("file", "")),)).start()
             elif kind == "action":
                 threading.Thread(target=self.poller.action, daemon=True, args=(message,)).start()
             elif kind == "history":

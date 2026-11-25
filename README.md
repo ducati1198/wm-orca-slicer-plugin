@@ -20,7 +20,7 @@
 
 Details:
 
-1. [Install](#1-install) (including [permissions](#12-the-permission-dialog) and [adding a printer](#13-adding-a-printer))
+1. [Install](#1-install) (including [Orca Cloud](#11b-install-from-orca-cloud), [no permission dialog](#11c-if-orca-never-asks-for-permission-add-the-printer-by-hand), [permissions](#12-the-permission-dialog) and [adding a printer](#13-adding-a-printer))
 2. [The Device tab](#2-the-device-tab)
 3. [Process settings: the WM Tool Map step](#3-process-settings-the-wm-tool-map-step) (including [what is written into the G-code](#33-what-is-written-into-the-g-code))
 4. [Safety: what the plugin sends](#4-safety-what-the-plugin-sends)
@@ -32,7 +32,7 @@ Details:
 ## Quick start
 
 1. **Download** [`wm_device.py`](wm_device.py) from this repository (one file, nothing else to install).
-2. **Install it in OrcaSlicer 2.5.2:** **File > Plugins > Install local plugin**, pick the file and tick **Activate**. Approve the one permission dialog. Details with pictures in [1.1](#11-install-the-plugin).
+2. **Install it in OrcaSlicer 2.5.2:** **File > Plugins > Install local plugin**, pick the file and tick **Activate** (or subscribe on Orca Cloud, see [1.1b](#11b-install-from-orca-cloud)). Approve the one permission dialog; if Orca never shows it, add the printer by hand ([1.1c](#11c-if-orca-never-asks-for-permission-add-the-printer-by-hand)). Details with pictures in [1.1](#11-install-the-plugin).
 3. **Open the WM Device tab**, type the address of your printer and press **Connect**. A printer the plugin has never seen needs **one Orca restart** to be approved, see [1.3](#13-adding-a-printer).
 4. **Optional, for the tool map:** in your process profile choose **WM Tool Map** under **Process > Others > Slicing Pipeline Plugin**. After slicing, a window asks which toolhead prints which filament. See [3](#3-process-settings-the-wm-tool-map-step).
 
@@ -52,6 +52,10 @@ Details:
 | **Remembered map and material warning** | The tool map is remembered per project and filled in next time; a red warning shows when a filament does not match the loaded spool |
 | **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
+| **Files page with pictures** | Each file shows a picture of the part, its filament colours and weight. **Print** opens the tool mapping window first, then starts the print |
+| **Style button** | Switches the tab between the current look and two modern dark styles |
+| **Home Z and Motors off** | Two extra buttons in the Move section (blocked while printing) |
+| **Connection and Klipper notices** | Orca notice when the connection to the printer is lost or comes back, and when Klipper reports an error or shutdown (while the tab is open) |
 | One printer list | Saved addresses with a **Forget** button; the printer addresses are never written in the plugin |
 
 ## If something goes wrong
@@ -99,6 +103,28 @@ Step by step:
 7. A new tab called **WM Device** appears next to Prepare, Preview, Device and Project. The plugin version is shown at the bottom of its left menu.
 
 **Updating:** install the new `wm_device.py` **over the old one** (overwrite). Do not remove the plugin first: the list of your printers is kept in the plugin's data folder and a removal can erase it. To avoid a pile of dialogs, untick **Activate**, press **Install local plugin**, pick the new file, press **Overwrite**, then tick **Activate** again.
+
+### 1.1b Install from Orca Cloud
+
+The plugin is also on Orca Cloud ("WonderMaker Ultra/Ultra-S Device Tab and a Tool Mapping").
+
+1. Sign in to Orca Cloud in OrcaSlicer, open **File > Plugins** and press **Refresh**.
+2. Subscribe to the plugin on the Orca Cloud page, then tick **Activate** next to it in the **Plugins** window.
+3. If the **WM Device** tab shows **needs approval** and Orca never showed a permission dialog, add the printer by hand (next section).
+
+Use **only one copy**: if the list shows both a local **WM Device** and the Cloud one, activate just one of them.
+
+### 1.1c If Orca never asks for permission (add the printer by hand)
+
+A fresh install has no saved printers, so at load the plugin has nothing to ask for. You can grant the printer yourself:
+
+1. Open **File > Plugins** and select the WM Device plugin.
+2. Open the **Permissions** tab, scroll down and open **Network access**.
+3. In **HTTP network**, type `http://` followed by the printer address (for example `http://192.168.1.50`) and press **Add**. A bare address covers every port on that printer.
+4. Open **Execution** and check that background threads are allowed.
+5. Go back to the **WM Device** tab, type the same address and press **Connect**.
+
+Orca clears permissions on every plugin update, so repeat this (or approve the dialog) after each update.
 
 ### 1.2 The permission dialog
 
@@ -268,6 +294,11 @@ The plugin finds out which of the two applies by asking the printer whether the 
 | The tool map window shows only the printer's own tools | Orca's filament list could not be read; the window says so. Choose the toolheads by hand |
 | The window opens on every slice and you do not want it | Set **Slicing Pipeline Plugin** to none, or press **Skip mapping** |
 | A printer comes back after **Forget** | Update to a version with the Forget fix (0.24.13 or newer) |
+| No permission dialog after installing from Orca Cloud, **needs approval** stays | Add the printer by hand: **File > Plugins**, select the plugin, **Permissions > Network access > HTTP network**, add `http://<printer address>`, check **Execution**, then press **Connect** ([1.1c](#11c-if-orca-never-asks-for-permission-add-the-printer-by-hand)). Version 0.26.1 and newer also save the printer list where the plugin finds it at load |
+| The version did not change after installing | Untick **Activate**, press **Install local plugin**, pick the new file, **Overwrite**, tick **Activate** again. Check the version at the bottom of the tab's left menu |
+| Two WM Device entries in the Plugins list | A local copy and the Cloud copy. Activate only one |
+| Permissions are empty again after an update | Orca clears them on every plugin update. Approve the dialog again or re-add the printer in the **Permissions** tab |
+| Camera stays black | Press **Refresh camera**. If it stays black, open `http://<address>/webcam/?action=stream` in a browser to check the printer's camera |
 | Pi and a printer on the factory Klipper in the same list | That works. The plugin checks which one has the `WM_SET_TOOL_MAP` macro for each |
 
 If you ask for help, give the plugin version (shown at the bottom of the tab's left menu) and what the red message says.
