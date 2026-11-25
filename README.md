@@ -52,6 +52,7 @@ Details:
 | **Remembered map and material warning** | The tool map is remembered per project and filled in next time; a red warning shows when a filament does not match the loaded spool |
 | **Print notices** | Orca notice when a print ends, pauses or fails (while the WM Device tab is open) |
 | **Filament in the file → toolhead** view | Read-only picture in the tab that shows which filament of the file goes to which toolhead |
+| **History with pictures** | Last 25 prints with picture, filament colours, weight and result, a totals bar, **Print again** (opens the tool mapping window with your remembered map) and tick boxes with **Delete** for the list entries |
 | **Delete files** | Tick the box next to a file picture and press the red **Delete** next to **Refresh list**; it asks first and is blocked while printing |
 | **Unload Menu and printer popups** | The **Unload Menu** button runs `WM_UNLOAD_MENU`; any popup window a printer macro shows opens in the tab, with its buttons |
 | **Spool pictures** | Filament colours are drawn as small spools (Device cards, Files page, Print mapping window) instead of plain dots |
@@ -167,7 +168,7 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 |---|---|
 | **Status** | Camera, print progress with **Pause / Resume / Stop**, the four toolheads (colour, material), Control and Move panels, temperatures, fans, speed, the ACE Pro panel when the printer has one |
 | **Files** | The gcode files on the printer. Start one with **Print** (asks first). Tick files and press **Delete** to remove them (asks first) |
-| **History** | The print history with state and time |
+| **History** | The last 25 prints with picture, filament colours, weight and result, totals on top, **Print again** and **Delete** (list entries only) |
 | **Messages** | Errors and warnings of the printer's console, grouped |
 
 <img src="docs/img/files-page.png" alt="WM Device tab, Files page: gcode files with part picture, filament spools, Print buttons, tick boxes and the red Delete button" width="900">

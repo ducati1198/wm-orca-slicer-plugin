@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.28.1
+- **History page upgrade:** each print shows the part picture, the filament colours as spools, the weight and a coloured result badge (last 25 prints), with a totals bar on top (prints, print time, filament, longest print).
+- **Print again** opens the tool mapping window with your remembered filament choice for that project. Entries whose file is gone show "file deleted".
+- **Tick boxes and Delete** remove entries from the history list only; the gcode files stay on the printer.
+
 ## 0.28.0
 - **Delete files:** the Files page has a tick box next to each picture and a red **Delete** button next to **Refresh list**. It shows the files, asks "Yes, delete" or Cancel, and is blocked while a print runs.
 - **Unload Menu button** in the Move section (green, next to Light, Home Z and Motors off, now in two columns). It runs the printer's `WM_UNLOAD_MENU` macro, is blocked while printing but allowed when paused, and is hidden on printers that do not have the macro.

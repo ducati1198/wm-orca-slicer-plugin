@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.28.0"
+# version = "0.28.1"
 # ///
 """WM Device v0.6.
 
@@ -732,13 +732,48 @@ class Poller:
 
     def history(self):
         try:
-            jobs = http_json(self.base + "/server/history/list?limit=10&order=desc")["result"]["jobs"]
-            self.post({"type": "history", "jobs": [{"file": j.get("filename", ""), "status": j.get("status", ""),
-                                                    "start": j.get("start_time", 0),
-                                                    "dur": j.get("print_duration", 0),
-                                                    "total": j.get("total_duration", 0)} for j in jobs]})
+            jobs = http_json(self.base + "/server/history/list?limit=25&order=desc")["result"]["jobs"]
+            try:
+                tot = http_json(self.base + "/server/history/totals", timeout=6)["result"]["job_totals"]
+            except Exception:  # noqa: BLE001
+                tot = {}
+            out = []
+            for j in jobs:
+                md = j.get("metadata") or {}
+                cols = [str(c) for c in (md.get("filament_colors") or md.get("extruder_colors") or [])][:HEADS]
+                out.append({"id": str(j.get("job_id", "")), "file": j.get("filename", ""), "status": j.get("status", ""),
+                            "start": j.get("start_time", 0), "dur": j.get("print_duration", 0),
+                            "total": j.get("total_duration", 0), "exists": bool(j.get("exists")),
+                            "fu": j.get("filament_used", 0), "g": md.get("filament_weight_total") or 0, "c": cols})
+            self.post({"type": "history", "jobs": out, "totals": {
+                "n": tot.get("total_jobs", 0), "t": tot.get("total_print_time", 0),
+                "f": tot.get("total_filament_used", 0), "l": tot.get("longest_print", 0)}})
+            paths = []
+            for j in out:
+                if j["exists"] and j["file"] not in paths:
+                    paths.append(j["file"])
+            if paths:
+                threading.Thread(target=self.file_meta, daemon=True, args=(paths,)).start()
         except Exception as exc:  # noqa: BLE001
             self.post({"type": "history", "jobs": [], "error": repr(exc)})
+
+    def delete_history(self, ids):
+        ok, errs = 0, []
+        for i in ids:
+            i = str(i or "").strip()
+            if not re.fullmatch(r"[0-9A-Fa-f]{1,16}", i):
+                errs.append("bad id")
+                continue
+            try:
+                http_json(self.base + "/server/history/job?uid=" + i, method="DELETE", timeout=10)
+                ok += 1
+            except Exception as exc:  # noqa: BLE001
+                errs.append(i + ": " + repr(exc)[:80])
+        text = "removed %d entr%s from the history" % (ok, "y" if ok == 1 else "ies")
+        if errs:
+            text += "; not removed: " + "; ".join(errs[:3])
+        self.post({"type": "result", "ok": not errs, "text": text})
+        self.history()
 
     def sync_tmt1(self, tool, hexv, mat):
         """Write the colour and material into config/tmt1.ini (swatch numbers) so the screen and Fluidd match."""
@@ -1194,7 +1229,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-files" onclick="showTab('files')">Files</div>
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.28.0</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.28.1</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1296,7 +1331,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 </div>
 
 <div id="v-files" style="display:none"><div class="panel"><div class="ph">Files <span class="sp"></span><button onclick="loadFiles()">Refresh list</button> <button id="delBtn" onclick="askDelete()" style="background:#c0392b;border-color:#c0392b;color:#fff">Delete</button></div><div class="pb"><div id="delbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="files" class="muted">press Refresh list</div></div></div></div>
-<div id="v-hist" style="display:none"><div class="panel"><div class="ph">Print history <span class="sp"></span><button onclick="loadHist()">Refresh</button></div><div class="pb"><div id="hist" class="muted">loading...</div></div></div></div>
+<div id="v-hist" style="display:none"><div class="panel"><div class="ph">Print history <span class="sp"></span><button onclick="loadHist()">Refresh</button> <button onclick="askDelHist()" style="background:#c0392b;border-color:#c0392b;color:#fff" id="hDelBtn">Delete</button></div><div class="pb"><div id="htot" style="display:flex;gap:10px;margin-bottom:12px"></div><div id="hdelbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="hist" class="muted">loading...</div></div></div></div>
 <div id="v-msgs" style="display:none"><div class="panel"><div class="ph">Messages and errors</div><div class="pb"><div id="msgs" class="muted">-</div></div></div></div>
 <div class="muted" id="upd" style="margin-top:10px"></div>
 </div>
@@ -1338,6 +1373,26 @@ function doFan(n,v){v=parseInt(v);if(isNaN(v)||v<0||v>100)return;doAct({kind:"fa
 function doSpeed(v){v=parseInt(v);if(isNaN(v)||v<10||v>300)return;var e=$("sp");e.value=v;slv(e);doAct({kind:"speed",value:v})}
 function syncCtl(s){var g=function(id,v){var e=$(id);if(e&&document.activeElement!==e&&v!==undefined&&v!==null){e.value=Math.round(v*100);slv(e)}};
   g("fp",(s.fan||{}).speed);g("fa",(s["fan_generic auxiliary_fan"]||{}).speed);g("fr",(s["fan_generic air_fan"]||{}).speed);g("sp",(s.gcode_move||{}).speed_factor)}
+var HJOBS=[],HTOT=null,HERR="",HSEL={};
+function fmtH(t){t=Math.round(t||0);var h=Math.floor(t/3600),m=Math.round((t%3600)/60);return h?h+" h "+m+" min":m+" min"}
+function renderHist(){var tb="";
+  if(HTOT){[["Prints",Math.round(HTOT.n)],["Print time",fmtH(HTOT.t)],["Filament",(HTOT.f/1000).toFixed(0)+" m"],["Longest print",fmtH(HTOT.l)]].forEach(function(x){tb+='<div style="flex:1;background:var(--card2);border-radius:10px;padding:8px 12px"><div class="muted" style="font-size:11px">'+x[0]+'</div><div style="font-size:17px;font-weight:700">'+x[1]+'</div></div>'})}
+  $("htot").innerHTML=tb;var h="";
+  HJOBS.forEach(function(j){var mt=FMETA[j.file]||{};var st=j.status,bc=st==="completed"?["rgba(0,174,66,.18)","#35d07f"]:(st==="in_progress"?["rgba(128,128,128,.2)","#aab"]:(st==="cancelled"?["rgba(224,160,48,.18)","#e0a030"]:["rgba(220,60,60,.18)","#ff7a75"]));
+    var d=new Date(j.start*1000).toLocaleString()+" · "+fmtH(j.dur);var g=mt.g||j.g;if(g)d+=" · "+Math.round(g)+" g";else if(j.fu>0)d+=" · "+(j.fu/1000).toFixed(1)+" m";
+    var th=mt.th?'<img class="fth" src="'+esc(mt.th)+'" onerror="this.style.visibility=\'hidden\'">':'<div class="fth"></div>';
+    var cols=mt.c&&mt.c.length?mt.c:(j.c||[]);var dots=cols.map(function(c,i){var u=!mt.u||mt.u[i];return '<span style="display:inline-flex'+(u?"":";opacity:.3")+'">'+spool(c,20)+'</span>'}).join("");
+    var btn=j.exists?'<button class="pri" data-ph="'+esc(j.file)+'" '+((STATE==="printing"||STATE==="paused")?"disabled":"")+'>Print again</button>':'<span class="muted" style="min-width:90px;text-align:center">file deleted</span>';
+    h+='<div class="frow"><input type="checkbox" class="fchk" data-hc="'+esc(j.id)+'" '+(HSEL[j.id]?"checked":"")+'>'+th+'<div class="fmid"><div class="fname">'+esc(j.file)+'</div><div class="muted">'+d+'</div><div class="fdots">'+dots+'</div></div><span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;background:'+bc[0]+';color:'+bc[1]+'">'+esc(st)+'</span>'+btn+'</div>'});
+  $("hist").innerHTML=h||(HERR?"history not available: "+esc(HERR):"no jobs yet");
+  Array.prototype.forEach.call($("hist").querySelectorAll("button[data-ph]"),function(b){b.onclick=function(){printFile(b.getAttribute("data-ph"))}});
+  Array.prototype.forEach.call($("hist").querySelectorAll(".fchk"),function(c){c.onchange=function(){var k=c.getAttribute("data-hc");if(c.checked)HSEL[k]=1;else delete HSEL[k];updHDel()}});
+  var keep={};HJOBS.forEach(function(j){if(HSEL[j.id])keep[j.id]=1});HSEL=keep;updHDel()}
+function updHDel(){var n=Object.keys(HSEL).length;$("hDelBtn").textContent=n?"Delete ("+n+")":"Delete"}
+function askDelHist(){var l=Object.keys(HSEL),r=$("res");if(!l.length){r.className="err";r.textContent="Tick the box next to each history entry you want to remove first.";return}
+  var b=$("hdelbar");b.style.display="block";b.innerHTML='<div style="font-weight:700;margin-bottom:6px">Remove '+l.length+' entr'+(l.length>1?"ies":"y")+' from the history list?</div><div class="muted" style="margin-bottom:10px">Only the list entries go. The gcode files stay on the printer.</div><button id="hdYes" style="background:#c0392b;border-color:#c0392b;color:#fff">Yes, remove</button> <button id="hdNo">Cancel</button>';
+  $("hdNo").onclick=function(){b.style.display="none"};
+  $("hdYes").onclick=function(){var x=Object.keys(HSEL);HSEL={};b.style.display="none";updHDel();$("res").className="muted";$("res").textContent="removing...";orca.postMessage({type:"deletehist",ids:x})}}
 function loadHist(){$("hist").textContent="loading...";orca.postMessage({type:"history"})}
 setInterval(function(){try{orca.postMessage({type:"ping"})}catch(e){}},3000);
 reqFils();setInterval(reqFils,6000);
@@ -1601,11 +1656,9 @@ orca.onMessage(function(m){
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
   if(m.type==="prompt"){var pm=$("pmodal");if(m.close||!m.prompt){pm.style.display="none"}else{showPrompt(m.prompt)}}
   if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text}
-  if(m.type==="history"){var hh="";m.jobs.forEach(function(j){var c=j.status==="completed"?"ok":(j.status==="in_progress"?"muted":"err");
-    hh+='<div class="file"><span>'+esc(j.file)+' <span class="muted">'+new Date(j.start*1000).toLocaleString()+' · '+tt(j.dur)+'</span></span><span class="'+c+'">'+esc(j.status)+'</span></div>'});
-    $("hist").innerHTML=hh||(m.error?"history not available: "+esc(m.error):"no jobs yet")}
+  if(m.type==="history"){HJOBS=m.jobs||[];HTOT=m.totals||null;HERR=m.error||"";renderHist()}
   if(m.type==="files"){FROWS=m.files;FROWS.sort(function(a,b){return b.modified-a.modified});renderFiles()}
-  if(m.type==="filemeta"){for(var fk in m.meta)FMETA[fk]=m.meta[fk];renderFiles()}
+  if(m.type==="filemeta"){for(var fk in m.meta)FMETA[fk]=m.meta[fk];renderFiles();if(HJOBS.length)renderHist()}
 });
 try{(JSON.parse(localStorage.getItem("wmdev_addrs")||"[]")).forEach(addOpt)}catch(e){}
 try{var a=localStorage.getItem("wmdev_addr");if(a){$("addr").value=a;addOpt(a);syncPreset(a);connect()}else{orca.postMessage({type:"defaults"})}}catch(e){}
@@ -2141,6 +2194,8 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                 threading.Thread(target=self.poller.action, daemon=True, args=(message,)).start()
             elif kind == "history":
                 threading.Thread(target=self.poller.history, daemon=True).start()
+            elif kind == "deletehist":
+                threading.Thread(target=self.poller.delete_history, daemon=True, args=([str(x) for x in (message.get("ids") or [])][:50],)).start()
             elif kind == "promptbtn":
                 threading.Thread(target=self.poller.prompt_click, daemon=True, args=(str(message.get("script", "")),)).start()
             elif kind == "deletefiles":
