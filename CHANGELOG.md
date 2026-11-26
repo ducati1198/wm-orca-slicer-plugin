@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.29.6
+- **Live screen refresh (optional) for factory printers:** after a spool colour/material save, the plugin now tries an optional, separately-installed local helper that makes the touchscreen update immediately instead of waiting for its app to restart. Nothing changes if the helper isn't installed. See `screen-sync/` and the README section "Factory printers: live screen refresh (optional)".
+
+## 0.29.5
+- **Spool editor on factory printers:** opening a toolhead now preselects its current material (read from `tmt1.ini`) instead of always showing "Empty / not set".
+- **Factory save result:** the message after saving a spool now says the touchscreen shows it once its app restarts.
+- **Nozzle temperature on factory printers:** the box is read-only and shows that material's usual default (factory printers do not store a temperature per slot); vanilla Klipper printers keep their own saved temperature, unchanged.
+
+## 0.29.4
+- **Vanilla Klipper spool editor:** the material list now matches the printer's own 27-material table (previously only the touchscreen's smaller 16-material list), with the exact saved index read back and reselected, so names like "PLA-CF" or "PETG-CF" round-trip correctly.
+
+## 0.29.3
+- **Orca API check panel:** a small panel reports which `orca.host.*` capabilities the running Orca build exposes (used to confirm plugin features on OrcaSlicer 2.5.2).
+
 ## 0.29.2
 - **Description box in the tool mapping windows:** above the buttons, one line explains what each button does (Apply mapping, Skip mapping, Cancel in the slicing window; Apply and print, Print without map, Cancel in the Print window). The windows are a little taller to fit it.
 

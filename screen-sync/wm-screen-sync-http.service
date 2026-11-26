@@ -1,0 +1,13 @@
+[Unit]
+Description=WM screen sync (optional live colour/material refresh for the factory touchscreen, WM Device Orca plugin)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/wm-screen-sync-http
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

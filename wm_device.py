@@ -5,7 +5,7 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
 # author = "ducati1198"
-# version = "0.29.2"
+# version = "0.29.6"
 # ///
 """WM Device v0.6.
 
@@ -65,7 +65,11 @@ def merge_saved(slots, status):
                 k["colour"] = "#%06X" % (c & 0xFFFFFF)
             m = int(v.get("zr_t%d_mat" % i, 0) or 0)
             if m in SPOOL_MATS:
-                k["material"] = SPOOL_MATS[m]
+                mi = k.get("midx")
+                if not (isinstance(mi, int) and 0 <= mi < len(TOUCH_MATS) and TOUCH_MATS[mi] == m):
+                    mi = next((n for n, z in enumerate(TOUCH_MATS) if z == m), None)
+                    k["material"] = SPOOL_MATS[m]
+                k["midx"] = mi          # exact entry of the touchscreen list (0-26), so PA-CF stays PA-CF
             k["mat"] = m
             k["temp"] = int(v.get("zr_t%d_temp" % i, 0) or 0)
         except (TypeError, ValueError):
@@ -155,6 +159,22 @@ def update_tmt1(text, index, color, material):
     return eol.join(lines) + (eol if text.endswith(("\n", "\r")) else "")
 
 
+def refresh_screen_live(base, timeout=2):
+    """Best-effort call to the OPTIONAL wm-screen-sync-http helper (see README,
+    screen-sync/). Returns True only if it applied the refresh; False if it
+    isn't installed, isn't reachable, or failed - the caller should fall back
+    to the normal "restarts its app" message in that case."""
+    try:
+        host = urllib.parse.urlsplit(base).hostname
+        if not host:
+            return False
+        req = urllib.request.Request("http://%s:8766/refresh" % host, data=b"", method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def upload_config(base, subdir, name, text):
     """Moonraker file upload into the config root (same call the Fluidd panel uses)."""
     import uuid
@@ -187,6 +207,7 @@ def parse_slots(text):
                 out[head]["colour"] = ZR_COLOURS[val]
             if key == "material" and 0 <= val < len(ZR_MATERIALS):
                 out[head]["material"] = ZR_MATERIALS[val]
+                out[head]["midx"] = val
     return out
 
 
@@ -831,10 +852,11 @@ class Poller:
         self.post({"type": "result", "ok": not errs, "text": text})
         self.history()
 
-    def sync_tmt1(self, tool, hexv, mat):
+    def sync_tmt1(self, tool, hexv, mat, midx=None):
         """Write the colour and material into config/tmt1.ini (swatch numbers) so the screen and Fluidd match."""
         cidx = nearest_palette(int(hexv, 16))
-        midx = next((n for n, z in enumerate(TOUCH_MATS) if z == mat), 0)
+        if midx is None or not (0 <= midx < len(TOUCH_MATS)) or TOUCH_MATS[midx] != mat:
+            midx = next((n for n, z in enumerate(TOUCH_MATS) if z == mat), 0)
         cur = http_text(self.base + "/server/files/config/tmt1.ini")
         new = update_tmt1(cur, tool, cidx, midx)
         if new != cur:
@@ -936,6 +958,17 @@ class Poller:
             elif kind == "spool":
                 t = int(p.get("t"))
                 mat = int(p.get("mat"))
+                midx = p.get("midx")
+                midx = None if midx is None else int(midx)
+                if midx is not None:
+                    # the list entry the person picked: vanilla Klipper (has _ZR_SET_TOOL_INFO) 0-26, factory screen list 0-15
+                    top = len(TOUCH_MATS) if "gcode_macro _ZR_SET_TOOL_INFO" in (self.last or {}) else 16
+                    if midx == -1:
+                        mat = 0
+                    elif midx in range(top):
+                        mat = TOUCH_MATS[midx]
+                    else:
+                        raise ValueError("material %d is not in this printer's list" % midx)
                 temp = int(p.get("temp"))
                 hexv = str(p.get("hex", "")).lstrip("#").upper()
                 if t not in range(HEADS) or mat not in range(0, 16) or not (temp == 0 or 150 <= temp <= 300) \
@@ -943,7 +976,8 @@ class Poller:
                     raise ValueError("toolhead 1-4, material 0-15, colour RRGGBB, temperature 0 or 150-300 only")
                 script = f"_ZR_SET_TOOL_INFO T={t} HEX={hexv} MAT={mat} TEMP={temp}"
                 legacy = f"ZR_SET_TOOL_INFO T={t} HEX={hexv} MAT={mat} TEMP={temp}"
-                text = f"toolhead {t + 1}: {SPOOL_MATS.get(mat, 'empty')} #{hexv}" + (f" {temp} C" if temp else "")
+                mname = ZR_MATERIALS[midx] if midx is not None and 0 <= midx < len(ZR_MATERIALS) else SPOOL_MATS.get(mat, 'empty')
+                text = f"toolhead {t + 1}: {mname} #{hexv}" + (f" {temp} C" if temp else "")
             elif kind == "dry":
                 if p.get("on"):
                     temp = int(p.get("temp"))
@@ -1015,8 +1049,14 @@ class Poller:
                 return
             if kind == "spool" and mat > 0:
                 try:
-                    near = self.sync_tmt1(t, hexv, mat)
+                    near = self.sync_tmt1(t, hexv, mat, midx)
                     note = " (screen and Fluidd show " + near + ")"
+                    if "gcode_macro _ZR_SET_TOOL_INFO" not in (self.last or {}):
+                        if refresh_screen_live(self.base):
+                            note += ". The factory touchscreen is updated now"
+                        else:
+                            note += (". The factory touchscreen reads it when its app restarts"
+                                     " (an optional live-refresh helper is available - see the plugin README)")
                 except Exception as exc:
                     note = " - but the screen and Fluidd colour list (tmt1.ini) was NOT updated: " + repr(exc)
             self.post({"type": "result", "ok": True, "text": text + " sent" + note})
@@ -1286,7 +1326,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.2</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.6</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1300,7 +1340,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div id="spool" class="ov" style="display:none"><div class="mdl">
 <div class="mh"><span id="spW" class="prev"></span><b id="spT"></b></div>
 <div class="lbl">Material</div><select id="spM"></select>
-<div class="lbl">Nozzle temp (blank = none)</div><input id="spN" type="number" min="150" max="300" placeholder="&deg;C">
+<div class="lbl" id="spNL">Nozzle temp (blank = none)</div><input id="spN" type="number" min="150" max="300" placeholder="&deg;C">
 <div class="lbl">Colour</div><div id="spC" class="swr"></div>
 <div id="svBox" class="svb"><b id="svK"></b></div>
 <input type="range" id="hue" class="hue" min="0" max="360" step="1" value="0" oninput="hueIn(this.value)">
@@ -1390,7 +1430,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div id="v-files" style="display:none"><div class="panel"><div class="ph">Files <span class="sp"></span><button onclick="loadFiles()">Refresh list</button> <button id="delBtn" onclick="askDelete()" style="background:#c0392b;border-color:#c0392b;color:#fff">Delete</button></div><div class="pb"><div id="delbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="files" class="muted">press Refresh list</div></div></div></div>
 <div id="v-hist" style="display:none"><div class="panel"><div class="ph">Print history <span class="sp"></span><button onclick="loadHist()">Refresh</button> <button onclick="askDelHist()" style="background:#c0392b;border-color:#c0392b;color:#fff" id="hDelBtn">Delete</button></div><div class="pb"><div id="htot" style="display:flex;gap:10px;margin-bottom:12px"></div><div id="hdelbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="hist" class="muted">loading...</div></div></div></div>
 <div id="v-tl" style="display:none"><div class="panel"><div class="ph">Timelapse videos <span class="sp"></span><button onclick="loadTL()">Refresh</button> <button onclick="askDelTL()" style="background:#c0392b;border-color:#c0392b;color:#fff" id="tDelBtn">Delete</button></div><div class="pb"><div id="tlplay" style="display:none;margin-bottom:12px"><video id="tlvid" controls style="display:block;margin:0 auto;width:auto;max-width:100%;height:auto;max-height:420px;background:transparent;border-radius:10px"></video><div style="display:flex;justify-content:space-between;margin-top:6px"><span id="tlname" class="muted"></span><button onclick="closeTL()">Close</button></div></div><div id="tdelbar" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid #c0392b;background:rgba(192,57,43,.12)"></div><div id="tlcount" class="muted" style="margin-bottom:8px"></div><div id="tllist" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px" class="muted">loading...</div></div></div></div>
-<div id="v-msgs" style="display:none"><div class="panel"><div class="ph">Messages and errors</div><div class="pb"><div id="msgs" class="muted">-</div></div></div></div>
+<div id="v-msgs" style="display:none"><div class="panel"><div class="ph">Messages and errors</div><div class="pb"><div id="msgs" class="muted">-</div></div></div><div class="panel"><div class="ph">Orca API check <span class="sp"></span><button onclick="orca.postMessage({type:'probe'});$('probetxt').value='checking...'">Check Orca API</button></div><div class="pb"><div class="muted" style="margin-bottom:6px">Read only: lists the names Orca offers to plugins. Nothing is changed. Select all and copy the text to send it.</div><textarea id="probetxt" readonly style="width:100%;height:260px;font-family:monospace;font-size:12px"></textarea></div></div></div>
 <div class="muted" id="upd" style="margin-top:10px"></div>
 </div>
 <script>
@@ -1487,6 +1527,11 @@ function setCam(){var img=$("cam");if(!camOn||!BASE){img.removeAttribute("src");
   var url=u.indexOf("http")==0?u:host+u;if(CAMBUST)url+=(url.indexOf("?")>=0?"&":"?")+"_t="+CAMBUST;$("camMsg").textContent=url;img.onerror=function(){$("camMsg").textContent="camera did not load: "+url};img.src=url}
 var SPM={1:"PLA",2:"PLA+",3:"PLA Silk",4:"PLA Matte",5:"PLA-CF",6:"PETG",7:"PETG-CF",8:"ABS",9:"ASA",10:"TPU",11:"PA",12:"PC",13:"PVA",14:"HIPS",15:"PLA Metal"};
 var SPC=[["White","FFFFFF"],["Beige","F3E8C8"],["Brown","9A6738"],["Grey","C7D5DF"],["Black","000000"],["Cyan","00DDE3"],["Light blue","13A7E8"],["Dark blue","0B4BD8"],["Light green","16E900"],["Dark green","00A84F"],["Yellow","FFF200"],["Orange","FF5A1F"],["Light pink","DDBFDE"],["Magenta","E72DBE"],["Red","FF1C2E"],["Bright blue","006EFF"],["Gold","D9A520"],["Copper","B86B44"],["Silver","AFC0CC"],["Multicolour","C060C0"],["Clear","D5E8EE"]];
+var ZRM=["PLA","PLA Silk","ABS","PETG","PLA Matte","PLA Metal","ABS Matte","PETG Matte","PVA","TPE","Marble","HIPS","TPU","PET","Wood","ASA","PLA+","PLA-CF","PETG-CF","PA","PA-CF","PC","ABS-CF","PA-GF","PC-ABS","PP","BVOH"];
+var ZRC=[1,3,8,6,4,15,8,6,13,10,15,14,10,15,15,9,2,5,7,11,11,12,8,11,12,15,10];
+var ZRV=false;
+var ZRT=[210,215,250,240,210,215,250,240,200,225,210,235,225,240,200,255,215,220,250,270,280,270,260,280,260,230,210];
+function spMat(){if(ZRV)return;var mi=parseInt($("spM").value);$("spN").value=mi>=0?ZRT[mi]:""}
 var SPI=0,SLOTS=[];
 var HSV=[0,1,1];
 function hsv2hex(h,sa,v){var c=v*sa,x=c*(1-Math.abs((h/60)%2-1)),m=v-c,r=0,g=0,b=0;
@@ -1508,15 +1553,17 @@ function svAt(ev){var r=$("svBox").getBoundingClientRect();HSV[1]=Math.min(1,Mat
 (function(){var dn=false,b=$("svBox");b.addEventListener("mousedown",function(e){dn=true;svAt(e);e.preventDefault()});
   window.addEventListener("mousemove",function(e){if(dn)svAt(e)});window.addEventListener("mouseup",function(){dn=false})})();
 function editSpool(i){SPI=i;var k=SLOTS[i]||{};$("spT").textContent="Toolhead "+(i+1);
-  var o='<option value="0">Empty / not set</option>';for(var m in SPM)o+='<option value="'+m+'">'+SPM[m]+'</option>';$("spM").innerHTML=o;$("spM").value=String(k.mat||0);
-  $("spN").value=k.temp>0?k.temp:"";
+  var top=ZRV?ZRM.length:16;var o='<option value="-1">Empty / not set</option>';for(var m=0;m<top;m++)o+='<option value="'+m+'">'+ZRM[m]+'</option>';$("spM").innerHTML=o;
+  var mi=(typeof k.midx==="number")?k.midx:-1;if(mi>=top)mi=-1;if(ZRV&&!k.mat)mi=-1;$("spM").value=String(mi);
+  $("spN").readOnly=!ZRV;$("spNL").textContent=ZRV?"Nozzle temp (blank = none)":"Nozzle temp (material default, this printer stores no temperature)";$("spM").onchange=spMat;
+  if(ZRV)$("spN").value=k.temp>0?k.temp:"";else spMat();
   var c="";SPC.forEach(function(p){c+='<i class="rsw" title="'+p[0]+'" style="background:#'+p[1]+'" onclick="setHex(\''+p[1]+'\')"></i>'});$("spC").innerHTML=c;
   setHex((k.colour||"#FFFFFF").replace("#",""));$("spool").style.display="flex"}
 function saveSpool(){var hx=$("spH").value.replace("#","").toUpperCase(),tp=$("spN").value===""?0:parseInt($("spN").value);
   if(!/^[0-9A-F]{6}$/.test(hx)){toast("colour must be 6 hex digits, e.g. FF1C2E");return}
   if(isNaN(tp)||!(tp===0||(tp>=150&&tp<=300))){toast("temperature: blank or 150 to 300");return}
-  var m=parseInt($("spM").value);
-  $("spool").style.display="none";$("res").className="muted";$("res").textContent="sending...";orca.postMessage({type:"action",kind:"spool",t:SPI,mat:m,hex:hx,temp:tp})}
+  var mi=parseInt($("spM").value),m=mi<0?0:ZRC[mi];
+  $("spool").style.display="none";$("res").className="muted";$("res").textContent="sending...";orca.postMessage({type:"action",kind:"spool",t:SPI,mat:m,midx:mi,hex:hx,temp:tp})}
 function hideConfirm(){PENDING=null;$("confirm").style.display="none"}
 function showConfirm(text,fn){PENDING=fn;$("confirmText").textContent=text;$("confirm").style.display="block"}
 $("confirmYes").onclick=function(){var f=PENDING;hideConfirm();if(f)f()};
@@ -1689,7 +1736,7 @@ function render(m){
   var inf=ps.info||{};$("layer").textContent=inf.total_layer?("layer "+(inf.current_layer||0)+" / "+inf.total_layer):"";
   var left=(st==="printing"&&p>0.02)?Math.max(0,ps.print_duration/p-ps.print_duration):null;
   $("times").textContent="printing "+tt(ps.print_duration)+(left!==null?" · about "+tt(left)+" left":"")+" · total "+tt(ps.total_duration);
-  SLOTS=m.slots||[];var cur=(s.toolhead||{}).extruder||"extruder";var h="";var names=["extruder","extruder1","extruder2","extruder3"];var sl=m.slots||[];
+  SLOTS=m.slots||[];ZRV=!!s["gcode_macro _ZR_SET_TOOL_INFO"];var cur=(s.toolhead||{}).extruder||"extruder";var h="";var names=["extruder","extruder1","extruder2","extruder3"];var sl=m.slots||[];
   var hasSensors=!!s["filament_switch_sensor filament0"];
   if(hasSensors){
   for(var i=0;i<4;i++){var x=s[names[i]];if(!x)continue;
@@ -1733,6 +1780,7 @@ orca.onMessage(function(m){
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
   if(m.type==="prompt"){var pm=$("pmodal");if(m.close||!m.prompt){pm.style.display="none"}else{showPrompt(m.prompt)}}
   if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text}
+  if(m.type==="probe"){$("probetxt").value=m.text||""}
   if(m.type==="timelapse"){TLV=m.vids||[];TLERR=m.error||"";renderTL()}
   if(m.type==="history"){HJOBS=m.jobs||[];HTOT=m.totals||null;HERR=m.error||"";renderHist()}
   if(m.type==="files"){FROWS=m.files;FROWS.sort(function(a,b){return b.modified-a.modified});renderFiles()}
@@ -1793,6 +1841,45 @@ def read_orca_filaments():
                                  parse_config_list(val("filament_settings_id"))), ""
     except Exception as exc:  # noqa: BLE001
         return [], repr(exc)
+
+
+def probe_orca_api():
+    """Read-only look at what this Orca offers to plugins (names and help text only, nothing is called)."""
+    out = []
+
+    def names(label, obj):
+        try:
+            out.append(label + ": " + ", ".join(n for n in dir(obj) if not n.startswith("_")))
+        except Exception as exc:  # noqa: BLE001
+            out.append(label + ": error " + repr(exc)[:100])
+
+    names("orca", orca)
+    host = getattr(orca, "host", None)
+    names("orca.host", host)
+    seen = []
+    for path in ("preset", "preset.filament", "preset.bundles", "preset.printer", "preset.process", "ui", "plater"):
+        obj = host
+        try:
+            for part in path.split("."):
+                obj = getattr(obj, part)
+        except Exception as exc:  # noqa: BLE001
+            out.append("orca.host." + path + ": not there (" + repr(exc)[:60] + ")")
+            continue
+        names("orca.host." + path, obj)
+        seen.append((path, obj))
+    for path, obj in seen:
+        for n in ("begin_update", "set_slot_color", "reload_local", "reload_presets", "slots", "list", "get", "set"):
+            try:
+                f = getattr(obj, n, None)
+                if f is not None and callable(f):
+                    out.append("help orca.host.%s.%s: %s" % (path, n, " ".join(str(getattr(f, "__doc__", "") or "").split())[:300]))
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        out.append("orca version: " + str(getattr(orca, "__version__", "") or getattr(host, "version", "") or "?"))
+    except Exception:  # noqa: BLE001
+        pass
+    return "\n".join(out)
 
 
 def clean_map(value):
@@ -2269,6 +2356,12 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                     self.poller.beat()
                     self._notify_state()
                     self._notify_more()
+            elif kind == "probe":
+                try:
+                    txt = probe_orca_api()
+                except Exception as exc:  # noqa: BLE001
+                    txt = "probe failed: " + repr(exc)
+                self._post({"type": "probe", "text": txt})
             elif kind == "orcafils":
                 fils, err = read_orca_filaments()
                 self._post({"type": "orcafils", "fils": fils, "err": err})

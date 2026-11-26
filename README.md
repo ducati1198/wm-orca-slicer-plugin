@@ -4,7 +4,7 @@
 
 **A Device tab and a tool mapping step for OrcaSlicer 2.5.2: watch and control your WonderMaker (Moonraker) printer, and choose which toolhead prints which filament of the file.**
 
-**Works with the factory Klipper and the factory app: you do not need to change anything on your printer.** The plugin only talks to the printer's Moonraker, so it runs next to the factory Klipper and the factory screen app as they are. Nothing is installed on the printer. (Connecting and live status are checked on a factory printer; a full multi-colour print on factory firmware is still being tested.)
+**Works with the factory Klipper and the factory app: you do not need to change anything on your printer.** The plugin only talks to the printer's Moonraker, so it runs next to the factory Klipper and the factory screen app as they are. Nothing is installed on the printer, unless you choose the optional live screen refresh for factory printers ([2.4b](#24b-factory-printers-live-screen-refresh-optional)). (Connecting and live status are checked on a factory printer; a full multi-colour print on factory firmware is still being tested.)
 
 **Related projects:** [WM_Ultra_Vanilla_Klipper](https://github.com/ducati1198/WM_Ultra_Vanilla_Klipper) (Raspberry Pi with upstream Klipper) · [wm-ultra-fluidd-acepro-panel](https://github.com/ducati1198/wm-ultra-fluidd-acepro-panel) (Fluidd Toolheads card and ACE Pro) · [wm-vanilla-klipper-factory](https://github.com/ducati1198/wm-vanilla-klipper-factory) (factory printer)
 
@@ -21,7 +21,7 @@
 Details:
 
 1. [Install](#1-install) (including [Orca Cloud](#11b-install-from-orca-cloud), [no permission dialog](#11c-if-orca-never-asks-for-permission-add-the-printer-by-hand), [permissions](#12-the-permission-dialog) and [adding a printer](#13-adding-a-printer))
-2. [The Device tab](#2-the-device-tab)
+2. [The Device tab](#2-the-device-tab) (including [spools: colour, material and temperature](#23-move-controls-and-spools) and [live screen refresh for factory printers](#24b-factory-printers-live-screen-refresh-optional))
 3. [Process settings: the WM Tool Map step](#3-process-settings-the-wm-tool-map-step) (including [what is written into the G-code](#33-what-is-written-into-the-g-code))
 4. [Safety: what the plugin sends](#4-safety-what-the-plugin-sends)
 5. [Update and uninstall](#5-update-and-uninstall)
@@ -191,7 +191,37 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 
 - **Move:** the Y/X pad (the centre **Home** circle homes all axes and asks first), the **Z axis** buttons and the step size (1, 10 or 50 mm). Moves apply at once and are blocked while printing. The **Unload Menu** button (only on printers that have the macro) opens the unload window; it works while paused too. The Z buttons use the printer's Z coordinate.
 - **Controls:** a temperature box and **Set** for Tool 1 to 4, the bed and the chamber, fan sliders (part, auxiliary, air filter), the speed factor (50 to 200 %), and **Cool down**.
-- **Spools:** click a spool in the filament card to set the material, nozzle temperature and colour, then **Save to printer**. The plugin saves it with the printer's `_ZR_SET_TOOL_INFO` macro, which the printer's own screens read.
+- **Spools:** click a spool in the filament card to set the material, nozzle temperature and colour, then **Save to printer**.
+  - **On a Pi running upstream Klipper** (the `WM_Ultra_Vanilla_Klipper` setup): saved with the printer's `_ZR_SET_TOOL_INFO` macro, which the printer's own screens and Fluidd read, including the nozzle temperature.
+  - **On a factory printer:** no macro for this exists, so the plugin writes the colour and material straight into `tmt1.ini`, the same file the touchscreen and the factory ZR Tools app use, picking from the printer's own 21 colours and 27 materials. Nozzle temperature is not stored by the factory app, so the box only shows that material's usual default, for reference. The touchscreen shows the change the next time its app restarts, or immediately if you install the optional live screen refresh below.
+
+### 2.4b Factory printers: live screen refresh (optional)
+
+You do not need this to use the plugin. On a factory printer, a spool change is always written to `tmt1.ini` (the touchscreen's own colour/material file); without this helper, the touchscreen shows it the next time its app restarts.
+
+Installing this small helper makes the touchscreen update immediately, with no restart. It is one command, run once, over SSH:
+
+1. Find your printer's IP address (the same one you use in the Device tab).
+2. SSH into the **screen board** (not Fluidd/Moonraker) as its factory user:
+   ```
+   ssh t13dp@<your printer's IP>
+   ```
+   Factory default login: user `t13dp`, password `TM88888`. If you've changed it, use your own password.
+3. Run the installer:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/ducati1198/wm-orca-slicer-plugin/main/screen-sync/install_screen_sync.sh | sudo bash
+   ```
+
+That's it — no reboot needed. The plugin automatically uses it from then on; if it can't reach it, nothing changes (you just get the usual "restarts its app" message).
+
+What it installs: one small Python service (`wm_screen_sync_http.py`, [screen-sync/](screen-sync/)) that runs as root and listens on port 8766. It only ever re-reads `tmt1.ini` and copies the same colour/material numbers into the running screen app's memory — it never touches Klipper and never sends G-code. Like Fluidd/Moonraker itself, it has no login of its own, so only install it on a network you trust.
+
+To remove it again:
+```
+sudo systemctl disable --now wm-screen-sync-http
+sudo rm -f /usr/local/sbin/wm-screen-sync-http /etc/systemd/system/wm-screen-sync-http.service
+sudo systemctl daemon-reload
+```
 
 ### 2.4 ACE Pro and Endless spool
 
@@ -323,6 +353,7 @@ If you ask for help, give the plugin version (shown at the bottom of the tab's l
 | `docs/img/` | The pictures used in this README |
 | `CHANGELOG.md` | What changed in each version |
 | `LICENSE` | GNU General Public License v3 |
+| `screen-sync/` | Optional helper for factory printers ([2.4b](#24b-factory-printers-live-screen-refresh-optional)): `wm_screen_sync_http.py` (the service), `wm-screen-sync-http.service` (systemd unit), `install_screen_sync.sh` (one-time installer) |
 | `.github/workflows/release.yml` | Publishes a GitHub release (tag, notes, `wm_device.py`) when `RELEASE` changes; notes are in `docs/release-notes/` |
 | `RELEASE` | The release number the workflow publishes (now 1.2.0) |
 
