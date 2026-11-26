@@ -3,11 +3,11 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "WM Device"
-# description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. If you install the optional wm-screen-sync-http helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately instead."
+# description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts, and the chamber light button needs the optional wm-screen-sync-http helper (it is hidden without it). If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change, and the chamber light button also works from here."
 # author = "ducati1198"
-# version = "0.29.7"
+# version = "0.29.9"
 # ///
-"""WM Device v0.6.
+"""WM Device v0.29.9.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -171,6 +171,31 @@ def refresh_screen_live(base, timeout=2):
         req = urllib.request.Request("http://%s:8766/refresh" % host, data=b"", method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
+    except Exception:
+        return False
+
+
+def chamber_light_live(base, action, timeout=3):
+    """Best-effort call to the OPTIONAL wm-screen-sync-http helper's /light endpoint
+    (same helper as refresh_screen_live, see README, screen-sync/). On a factory
+    touchscreen board this runs the same wm-chamber-light script the on-screen
+    "Chamber light" button already uses, so it is no riskier than that button.
+    action is "on", "off", "toggle" or "status". Returns the resulting state
+    ("on"/"off") on success, or None if the helper isn't installed, isn't
+    reachable, or failed - the caller should fall back to telling the person to
+    use the printer's own switch in that case."""
+    try:
+        host = urllib.parse.urlsplit(base).hostname
+        if not host:
+            return None
+        url = "http://%s:8766/light?action=%s" % (host, urllib.parse.quote(action, safe=""))
+        req = urllib.request.Request(url, data=(b"" if action != "status" else None),
+                                      method="POST" if action != "status" else "GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok") and data.get("state") in ("on", "off"):
+                return data["state"]
+            return None
     except Exception:
         return False
 
@@ -505,6 +530,8 @@ class Poller:
         self.objects = None
         self.cams = []
         self.slots = [{"colour": "", "material": ""} for _ in range(HEADS)]
+        self.has_tmt1 = False
+        self.light_state = None   # "on" / "off" / None (unknown - no helper, or a real Klipper macro printer)
         self.messages = []
         self.tick = 0
         self.print_state = ""
@@ -535,6 +562,8 @@ class Poller:
             self.base = base
             self.objects = None
             self.tick = 0
+            self.has_tmt1 = False
+            self.light_state = None
         self.ping = time.time()
         if base and (self.thread is None or not self.thread.is_alive()):
             self.stop.clear()
@@ -561,8 +590,15 @@ class Poller:
                 if self.tick % 5 == 0:   # slow data: filament colours/materials and the console messages
                     try:
                         self.slots = parse_slots(http_text(base + "/server/files/config/tmt1.ini"))
+                        self.has_tmt1 = True   # this printer has a factory screen board (tmt1.ini exists)
                     except Exception:  # noqa: BLE001
                         pass
+                    if self.has_tmt1 and "gcode_macro WM_CHAMBER_LIGHT" not in (self.objects or []):
+                        # factory printer with no Klipper light macro: ask the optional live helper
+                        # for the real state, so the Light button can show it as on/off.
+                        st = chamber_light_live(base, "status", timeout=1.5)
+                        if st is not None:
+                            self.light_state = st
                     try:
                         store = http_json(base + "/server/gcode_store?count=60")["result"]["gcode_store"]
                         self.messages = [{"t": m.get("time"), "text": m.get("message", "")[:240]}
@@ -577,7 +613,8 @@ class Poller:
                 self.fails = 0
                 self.kstate = (status.get("webhooks") or {}).get("state", "")
                 self.post({"type": "state", "base": base, "status": status, "time": time.time(), "cams": self.cams,
-                           "slots": merge_saved(self.slots, status), "messages": self.messages})
+                           "slots": merge_saved(self.slots, status), "messages": self.messages, "hasTmt1": self.has_tmt1,
+                           "lightOn": self.light_state})
                 try:
                     self.scan_prompts(base)
                 except Exception:  # noqa: BLE001
@@ -865,9 +902,11 @@ class Poller:
         if new != cur:
             upload_config(self.base, "", "tmt1.ini", new)      # only this one file, only the [slot] lines of one toolhead
         self.slots = parse_slots(new)
+        self.has_tmt1 = True   # a successful tmt1.ini write confirms this printer has a factory screen board
         if self.last:
             self.post({"type": "state", "base": self.base, "status": self.last, "time": time.time(), "cams": self.cams,
-                       "slots": merge_saved(self.slots, self.last), "messages": self.messages})
+                       "slots": merge_saved(self.slots, self.last), "messages": self.messages, "hasTmt1": self.has_tmt1,
+                       "lightOn": self.light_state})
         return TOUCH_PALETTE[cidx][0]
 
     def action(self, p):
@@ -1035,8 +1074,16 @@ class Poller:
             # Moonraker answers a gcode POST only when the command has finished, so homing and moves need minutes.
             tmo = 240 if kind in ("home", "homez", "move", "extrude", "endless_go", "unloadmenu") else 20
             note = ""
+            light_live_state = None
             if kind == "light" and "gcode_macro WM_CHAMBER_LIGHT" not in (self.last or {}):
-                raise ValueError("this printer has no WM_CHAMBER_LIGHT macro (factory firmware): use the printer's own light switch")
+                # factory firmware: no Klipper macro for it, try the optional live helper's /light
+                # endpoint instead (runs the same wm-chamber-light script the on-screen button uses).
+                light_live_state = chamber_light_live(self.base, "toggle")
+                if light_live_state is None:
+                    raise ValueError("this printer has no WM_CHAMBER_LIGHT macro (factory firmware): use the printer's "
+                                      "own light switch, or install the optional wm-screen-sync-http helper (see the "
+                                      "README's 'Factory printers: live screen refresh' section) to control it from here")
+                script = ""   # handled live above, no gcode macro to run
             if kind == "unloadmenu" and "gcode_macro WM_UNLOAD_MENU" not in (self.last or {}):
                 raise ValueError("this printer has no WM_UNLOAD_MENU macro (factory firmware)")
             try:
@@ -1066,6 +1113,11 @@ class Poller:
                                      " (an optional live-refresh helper is available - see the plugin README)")
                 except Exception as exc:
                     note = " - but the screen and Fluidd colour list (tmt1.ini) was NOT updated: " + repr(exc)
+            if kind == "light" and light_live_state is not None:
+                self.light_state = light_live_state
+                self.post({"type": "result", "ok": True, "text": "chamber light is now " + light_live_state,
+                           "lightOn": light_live_state})
+                return
             self.post({"type": "result", "ok": True, "text": text + " sent" + note})
         except Exception as exc:  # noqa: BLE001
             self.post({"type": "result", "ok": False, "text": "control: " + repr(exc)})
@@ -1130,6 +1182,7 @@ button.danger:hover:not(:disabled){background:#d9534f;border-color:#d9534f;color
 .mvcap{font-size:11px;color:var(--orca-muted);text-align:center;margin-bottom:6px}
 .k{display:flex;align-items:center;justify-content:center;gap:6px;min-width:52px;height:44px;border-radius:8px;background:var(--key);border:1px solid var(--keyb);color:var(--keyt);cursor:pointer;font-size:13px;font-weight:500;user-select:none}
 .k:hover{border-color:var(--g);background:var(--keyh)}.k:active{background:var(--g);border-color:var(--g);color:#fff}
+.k.on{background:var(--g);border-color:var(--g);color:#fff}
 .dial path.w{fill:var(--key);stroke:var(--orca-bg);stroke-width:3;cursor:pointer}
 .dial path.w:hover{fill:var(--g)}
 .dial text{fill:var(--keyt);font-size:14px;font-weight:500;pointer-events:none}
@@ -1333,7 +1386,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.7</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.9</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1441,7 +1494,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="muted" id="upd" style="margin-top:10px"></div>
 </div>
 <script>
-var BASE="",CAMS=[],camOn=true,STATE="",PENDING=null;
+var BASE="",CAMS=[],camOn=true,STATE="",PENDING=null,HASTMT1=false,LIGHTON=null;
 function $(i){return document.getElementById(i)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function t(v){return (v===undefined||v===null)?"-":(Math.round(v*10)/10).toFixed(1)+" °C"}
@@ -1643,7 +1696,7 @@ function setSw(id,key,v,dis){var e=$(id);if(!e)return;if(!SWT[key]||Date.now()-S
 function renderFil(s,sl){
   var vars=((s.save_variables||{}).variables)||{};
   var busy=(STATE==="printing"||STATE==="paused");
-  var bu=$("btnUnload");if(bu)bu.style.display=s["gcode_macro WM_UNLOAD_MENU"]?"":"none";var bl=$("btnLight");if(bl)bl.style.display=s["gcode_macro WM_CHAMBER_LIGHT"]?"":"none";
+  var bu=$("btnUnload");if(bu)bu.style.display=s["gcode_macro WM_UNLOAD_MENU"]?"":"none";var bl=$("btnLight");if(bl){bl.style.display=(s["gcode_macro WM_CHAMBER_LIGHT"]||HASTMT1)?"":"none";bl.classList.toggle("on",LIGHTON==="on")}
   var hasAce=!!(s["gcode_macro _WM_ACE"]||s.ace||s.ace_instance_0);
   var pro=s["output_pin ACE_Pro"],aut=s["output_pin ACE_Auto_Load"];
   var box=$("aceSw");box.style.display=(hasAce&&(pro||aut))?"block":"none";
@@ -1731,6 +1784,7 @@ function ex(d){act({kind:"extrude",dist:d})}
 function swatch(c){return c?'<span class="sw" style="background:'+esc(c)+'"></span>':''}
 function render(m){
   var s=m.status||{},ps=s.print_stats||{},ds=s.display_status||{},vs=s.virtual_sdcard||{};
+  HASTMT1=!!m.hasTmt1;if(m.lightOn!==undefined)LIGHTON=m.lightOn;
   BASE=m.base;CAMS=m.cams||[];if(camOn&&!$("cam").getAttribute("src"))setCam();
   if(FIRST){FIRST=false;loadFiles();loadHist()}
   $("err").textContent="";$("conn").textContent="connected to "+m.base.replace("http://","");$("navTxt").textContent=m.base.replace("http://","").replace(":7125","");$("navDot").className="dot on";
@@ -1786,7 +1840,7 @@ orca.onMessage(function(m){
   if(m.type==="approve"){$("err").textContent="New printer "+m.host+": Orca approves a printer address only while the plugin loads. It is saved now. Close Orca and open it again, approve the permission dialog for this printer, then press Connect. You only do this once per new printer.";$("conn").textContent="needs approval";return}
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
   if(m.type==="prompt"){var pm=$("pmodal");if(m.close||!m.prompt){pm.style.display="none"}else{showPrompt(m.prompt)}}
-  if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text}
+  if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text;if(m.lightOn!==undefined){LIGHTON=m.lightOn;var bl=$("btnLight");if(bl)bl.classList.toggle("on",LIGHTON==="on")}}
   if(m.type==="probe"){$("probetxt").value=m.text||""}
   if(m.type==="timelapse"){TLV=m.vids||[];TLERR=m.error||"";renderTL()}
   if(m.type==="history"){HJOBS=m.jobs||[];HTOT=m.totals||null;HERR=m.error||"";renderHist()}

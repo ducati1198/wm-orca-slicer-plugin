@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.29.9
+- **Chamber light icon sync (factory printers):** toggling the Light button now pokes the touchscreen's own "is the bulb icon on" flag directly, so its bulb icon flips immediately instead of waiting for its own ~10 s GPIO poll to catch up (best-effort: if it can't, the icon still self-corrects within a few seconds on its own).
+- **Light button colour:** the Light button now turns green while the chamber light is on (factory printers, via the live screen refresh helper; printers with a real `WM_CHAMBER_LIGHT` Klipper macro have no tracked state in this version and the button stays plain).
+- **Fix (helper, `screen-sync/wm_screen_sync_http.py`):** the background status check (`GET /light?action=status`), used to keep the Light button's colour in sync with the real light over time, was silently 404ing on every call because the route match didn't strip the query string. Fixed to match `do_POST`'s parsing.
+
+## 0.29.8
+- **Chamber light on factory printers:** the Light button, previously hidden on any printer without a `WM_CHAMBER_LIGHT` Klipper macro (all factory firmware), now also shows on factory printers and controls the real chamber light via the optional live screen refresh helper (`screen-sync/`). No helper installed or reachable → falls back to the previous "no macro" message, reworded to mention the helper.
+
 ## 0.29.7
 - **Faster spool colour update on factory printers:** saving a spool colour/material now writes it straight into `tmt1.ini` and refreshes the tab's own spool icon immediately, instead of waiting for the background poll's next `tmt1.ini` read (previously up to ~10 s). The touchscreen itself still updates the same way as 0.29.6 (immediately with the optional helper installed, otherwise on its next app restart).
 - Plugin description (shown in Orca's Install/Plugins dialog) now also explains the factory-printer live screen refresh and points to the README section for it.

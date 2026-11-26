@@ -191,6 +191,7 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 
 - **Move:** the Y/X pad (the centre **Home** circle homes all axes and asks first), the **Z axis** buttons and the step size (1, 10 or 50 mm). Moves apply at once and are blocked while printing. The **Unload Menu** button (only on printers that have the macro) opens the unload window; it works while paused too. The Z buttons use the printer's Z coordinate.
 - **Controls:** a temperature box and **Set** for Tool 1 to 4, the bed and the chamber, fan sliders (part, auxiliary, air filter), the speed factor (50 to 200 %), and **Cool down**.
+- **Light:** toggles the chamber light. Works on any printer with a `WM_CHAMBER_LIGHT` Klipper macro, and also on factory printers with no such macro, via the optional live screen refresh helper below (2.4b). The button turns green while the light is on; on factory printers this needs the helper installed, since that's also what reports the real state back.
 - **Spools:** click a spool in the filament card to set the material, nozzle temperature and colour, then **Save to printer**.
   - **On a Pi running upstream Klipper** (the `WM_Ultra_Vanilla_Klipper` setup): saved with the printer's `_ZR_SET_TOOL_INFO` macro, which the printer's own screens and Fluidd read, including the nozzle temperature.
   - **On a factory printer:** no macro for this exists, so the plugin writes the colour and material straight into `tmt1.ini`, the same file the touchscreen and the factory ZR Tools app use, picking from the printer's own 21 colours and 27 materials. Nozzle temperature is not stored by the factory app, so the box only shows that material's usual default, for reference. The touchscreen shows the change the next time its app restarts, or immediately if you install the optional live screen refresh below.
@@ -213,6 +214,8 @@ Installing this small helper makes the touchscreen update immediately, with no r
    ```
 
 That's it — no reboot needed. The plugin automatically uses it from then on; if it can't reach it, nothing changes (you just get the usual "restarts its app" message).
+
+On a factory printer, installing this helper also lets the **Light** button (2.3) control and show the real chamber light: without it, factory printers have no `WM_CHAMBER_LIGHT` macro so there is nothing for the button to call. With it, the touchscreen's own bulb icon updates immediately when you toggle the light from Orca (instead of catching up within its own ~10 s poll), and the Light button itself turns green while the light is on.
 
 What it installs: one small Python service (`wm_screen_sync_http.py`, [screen-sync/](screen-sync/)) that runs as root and listens on port 8766. It only ever re-reads `tmt1.ini` and copies the same colour/material numbers into the running screen app's memory — it never touches Klipper and never sends G-code. Like Fluidd/Moonraker itself, it has no login of its own, so only install it on a network you trust.
 
