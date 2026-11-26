@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.29.7
+- **Faster spool colour update on factory printers:** saving a spool colour/material now writes it straight into `tmt1.ini` and refreshes the tab's own spool icon immediately, instead of waiting for the background poll's next `tmt1.ini` read (previously up to ~10 s). The touchscreen itself still updates the same way as 0.29.6 (immediately with the optional helper installed, otherwise on its next app restart).
+- Plugin description (shown in Orca's Install/Plugins dialog) now also explains the factory-printer live screen refresh and points to the README section for it.
+
 ## 0.29.6
 - **Live screen refresh (optional) for factory printers:** after a spool colour/material save, the plugin now tries an optional, separately-installed local helper that makes the touchscreen update immediately instead of waiting for its app to restart. Nothing changes if the helper isn't installed. See `screen-sync/` and the README section "Factory printers: live screen refresh (optional)".
 

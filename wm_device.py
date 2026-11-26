@@ -3,9 +3,9 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "WM Device"
-# description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives."
+# description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. If you install the optional wm-screen-sync-http helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately instead."
 # author = "ducati1198"
-# version = "0.29.6"
+# version = "0.29.7"
 # ///
 """WM Device v0.6.
 
@@ -853,7 +853,10 @@ class Poller:
         self.history()
 
     def sync_tmt1(self, tool, hexv, mat, midx=None):
-        """Write the colour and material into config/tmt1.ini (swatch numbers) so the screen and Fluidd match."""
+        """Write the colour and material into config/tmt1.ini (swatch numbers) so the screen and Fluidd match,
+        and push the new value to the tab right away. Without this, the tab's spool icon only caught up on the
+        next tmt1.ini poll, which runs every 5th tick (POLL_S * 5, about 10s worst case) - a noticeable lag
+        after Save."""
         cidx = nearest_palette(int(hexv, 16))
         if midx is None or not (0 <= midx < len(TOUCH_MATS)) or TOUCH_MATS[midx] != mat:
             midx = next((n for n, z in enumerate(TOUCH_MATS) if z == mat), 0)
@@ -861,6 +864,10 @@ class Poller:
         new = update_tmt1(cur, tool, cidx, midx)
         if new != cur:
             upload_config(self.base, "", "tmt1.ini", new)      # only this one file, only the [slot] lines of one toolhead
+        self.slots = parse_slots(new)
+        if self.last:
+            self.post({"type": "state", "base": self.base, "status": self.last, "time": time.time(), "cams": self.cams,
+                       "slots": merge_saved(self.slots, self.last), "messages": self.messages})
         return TOUCH_PALETTE[cidx][0]
 
     def action(self, p):
@@ -1326,7 +1333,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.6</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.7</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
