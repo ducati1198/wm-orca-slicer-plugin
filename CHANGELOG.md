@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.29.10
+- **Plugin description updated** (shown in Orca's Install/Plugins dialog) to match 0.29.8/0.29.9: the chamber light button is now always shown on factory printers (previously it said the button was hidden without the live-refresh helper); clarified that controlling the light and the instant screen/colour updates both need that optional helper, and that the button turns green while the light is on.
+- **Orca Cloud listing description updated** (`docs/ORCA-CLOUD-LISTING.md`) to mention chamber light control.
+
 ## 0.29.9
 - **Chamber light icon sync (factory printers):** toggling the Light button now pokes the touchscreen's own "is the bulb icon on" flag directly, so its bulb icon flips immediately instead of waiting for its own ~10 s GPIO poll to catch up (best-effort: if it can't, the icon still self-corrects within a few seconds on its own).
 - **Light button colour:** the Light button now turns green while the chamber light is on (factory printers, via the live screen refresh helper; printers with a real `WM_CHAMBER_LIGHT` Klipper macro have no tracked state in this version and the button stays plain).
