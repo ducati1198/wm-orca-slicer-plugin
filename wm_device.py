@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.18"
+# version = "0.29.21"
 # ///
-"""WM Device v0.29.18.
+"""WM Device v0.29.21.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -196,6 +196,32 @@ def chamber_light_live(base, action, timeout=3):
             if data.get("ok") and data.get("state") in ("on", "off"):
                 return data["state"]
             return None
+    except Exception:
+        return None
+
+
+def moonraker_power(base, device, action=None, timeout=3):
+    """Read or set a Moonraker [power <device>] device's real on/off state, straight over
+    Moonraker's own device_power REST API - no extra helper needed. This is how a vanilla
+    Klipper install's chamber light works: WM_CHAMBER_LIGHT (see WM_Ultra_Vanilla_Klipper's
+    config/rpi_light.cfg) just flips a [power chamber_light] device in moonraker.conf, so the
+    Light button's colour has to be read back from here, not from the (factory-only) SSH helper
+    chamber_light_live() above. action is None to just read the current state, or "on"/"off"/
+    "toggle" to set it. Returns the resulting state ("on"/"off"), or None if the device isn't
+    configured in moonraker.conf or the request failed - the caller should leave the Light
+    button's colour alone in that case."""
+    try:
+        if action is None:
+            data = http_json(base + "/machine/device_power/device?device=" + urllib.parse.quote(device, safe=""),
+                              timeout=timeout)
+        else:
+            body = json.dumps({"device": device, "action": action}).encode("utf-8")
+            req = urllib.request.Request(base + "/machine/device_power/device", data=body, method="POST",
+                                          headers={"Accept": "application/json", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+        st = (data.get("result") or data).get(device)
+        return st if st in ("on", "off") else None
     except Exception:
         return None
 
@@ -702,7 +728,16 @@ class Poller:
                         self.has_tmt1 = "gcode_macro _ZR_SET_TOOL_INFO" not in (self.objects or [])
                     except Exception:  # noqa: BLE001
                         pass
-                    if self.has_tmt1 and "gcode_macro WM_CHAMBER_LIGHT" not in (self.objects or []):
+                    if "gcode_macro WM_CHAMBER_LIGHT" in (self.objects or []):
+                        # vanilla Klipper: WM_CHAMBER_LIGHT just flips a Moonraker [power
+                        # chamber_light] device (config/rpi_light.cfg in WM_Ultra_Vanilla_Klipper) -
+                        # read its real state straight from Moonraker, no helper needed, so the
+                        # Light button's colour matches reality even after the printer's own
+                        # switch, Fluidd or KlipperScreen toggled it outside this plugin.
+                        st = moonraker_power(base, "chamber_light")
+                        if st is not None:
+                            self.light_state = st
+                    elif self.has_tmt1:
                         # factory printer with no Klipper light macro: ask the optional live helper
                         # for the real state, so the Light button can show it as on/off.
                         st = chamber_light_live(base, "status", timeout=1.5)
@@ -1213,6 +1248,12 @@ class Poller:
             except TimeoutError:
                 self.post({"type": "result", "ok": True, "text": text + " sent, the printer is still working on it"})
                 return
+            if kind == "light" and light_live_state is None and "gcode_macro WM_CHAMBER_LIGHT" in (self.last or {}):
+                # vanilla Klipper: the WM_CHAMBER_LIGHT script above already toggled the Moonraker
+                # [power chamber_light] device - read its new state back the same way the factory
+                # helper path does, so the Light button shows the right colour immediately instead
+                # of waiting for the next poll (or never, since nothing used to refresh it here).
+                light_live_state = moonraker_power(self.base, "chamber_light")
             if kind == "spool" and mat > 0:
                 try:
                     near = self.sync_tmt1(t, hexv, mat, midx)
@@ -1511,7 +1552,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.18</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.21</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1916,7 +1957,7 @@ function renderMap(){
   $("mSrc").textContent=FILS.length?("Filaments of the open Orca project ("+FILS.length+(FILS.length>4?", only the first 4 are shown":"")+"), and the toolhead each one prints on."):("Orca project filaments not available"+(FILERR?" ("+FILERR+")":"")+": showing the printer's own four tools.");
   var W=600,RH=44,GAP=8,H=Math.max(rows.length,MHEADS.length)*(RH+GAP),CW=232,X2=W-CW,svg='<svg viewBox="0 0 '+W+' '+(H+4)+'" width="100%" style="max-width:640px;display:block;margin:6px auto 0;overflow:visible">',warn=[],lines="",cards="";
   rows.forEach(function(f,i){var y=i*(RH+GAP)+2,t=Math.max(0,Math.min(3,Number(MAP[i])||0)),hd=MHEADS.filter(function(x){return x.i===t})[0]||{},ok=hd.loaded!==false&&sameMat(f.type,hd.mat)&&cdist(f.colour,hd.colour)<=300,y2=t*(RH+GAP)+2,col=f.colour||"#808080";
-    if(!ok)warn.push(hd.loaded===false?"Toolhead "+(t+1)+" is empty: load filament before you print filament "+(i+1)+".":"Filament "+(i+1)+" ("+cname(f.colour)+" "+(f.type||"")+") prints on toolhead "+(t+1)+" ("+(hd.colour?cname(hd.colour):"no colour")+" "+(hd.mat||"")+"): the colours or materials differ.");
+    if(!ok)warn.push(hd.loaded===false?"Toolhead T"+t+" is empty: load filament before you print filament "+(i+1)+".":"Filament "+(i+1)+" ("+cname(f.colour)+" "+(f.type||"")+") prints on toolhead T"+t+" ("+(hd.colour?cname(hd.colour):"no colour")+" "+(hd.mat||"")+"): the colours or materials differ.");
     lines+='<path d="M'+CW+' '+(y+RH/2)+' C'+(CW+70)+' '+(y+RH/2)+' '+(X2-70)+' '+(y2+RH/2)+' '+X2+' '+(y2+RH/2)+'" fill="none" stroke="'+esc(col)+'" stroke-width="3.5" stroke-linecap="round"'+(ok?'':' stroke-dasharray="1 8"')+'/>';
     cards+='<rect x="0" y="'+y+'" width="'+CW+'" height="'+RH+'" rx="9" fill="var(--hd)" stroke="var(--orca-border)"/><circle cx="24" cy="'+(y+RH/2)+'" r="11" fill="'+esc(col)+'" stroke="rgba(128,128,128,.7)"/><text x="46" y="'+(y+19)+'" font-size="14" font-weight="700" fill="currentColor">T'+i+' &#183; '+esc(f.type||"")+'</text><text x="46" y="'+(y+36)+'" font-size="12" fill="currentColor" opacity=".7">Filament '+(i+1)+'</text>'});
   MHEADS.forEach(function(x){var y=x.i*(RH+GAP)+2,off=x.loaded===false;
@@ -2052,6 +2093,52 @@ def read_orca_filaments():
                                  parse_config_list(val("filament_settings_id"))), ""
     except Exception as exc:  # noqa: BLE001
         return [], repr(exc)
+
+
+def gcode_filament_usage(path):
+    """Per-filament-slot length used (mm) in this ONE sliced file, read from its own stats comment
+    ("; filament used [mm] = v0, v1, v2, v3", one value per configured filament slot, 0 for a slot the
+    file never touches) - the same field Moonraker's own metadata parser reads into filament_weights,
+    which print_with_map() above already trusts (a weight of 0 there means "(not used)"). OrcaSlicer
+    writes this in the FOOTER, not the header (checked against a real exported file: the header only has
+    the per-slot filament_density/filament_diameter/filament id lists - config, not usage - the actual
+    "filament used" stats sit a few hundred bytes before end-of-file), so only the last 16 KiB are read,
+    not the first N lines as an earlier version of this function wrongly assumed. Returns a list of
+    floats in filament order, or None if the line wasn't there or didn't parse - the caller should then
+    show every configured filament, same as before this existed."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 16384))
+            tail = fh.read().decode("utf-8", "replace")
+        for line in tail.splitlines():
+            s = line.strip()
+            if s.startswith("; filament used [mm]"):
+                return [float(p.strip()) for p in s.split("=", 1)[1].split(",")]
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def mark_filament_usage(fils, path):
+    """Flags each filament slot with 'used': True/False for THIS specific sliced file (e.g. a 4-slot
+    project where only T0 and T1 are actually assigned to objects) - read_orca_filaments() above returns
+    every slot CONFIGURED in the project, not just the ones used in this print. Marks in place rather
+    than dropping entries: the popup's JS indexes ROWS/MAP by array POSITION, which map_gcode_line() and
+    map_native_lines() above then write out as the literal filament-slot number (0-3) - removing an entry
+    would shift every slot after it out of alignment with its real toolhead-map number whenever an
+    unused slot ISN'T the last one (e.g. T0 and T2 used, T1 and T3 not). Best-effort: if the header's
+    usage line is missing, malformed, or doesn't cover every filament, every filament is marked used
+    (today's behaviour), so a parsing miss can only show an extra filament, never hide a real one."""
+    usage = gcode_filament_usage(path)
+    for f in fils:
+        idx = f.get("index", -1)
+        f["used"] = True if not usage else (0 <= idx < len(usage) and usage[idx] > 0.05)
+    if usage and not any(f["used"] for f in fils):
+        for f in fils:   # nothing matched (unexpected header shape): fail open, show everything
+            f["used"] = True
+    return fils
 
 
 def probe_orca_api():
@@ -2191,21 +2278,21 @@ function cname(c){var b="",bd=1e9;PALN.forEach(function(p){var d=cdist(c,p[1]);i
 function sameMat(a,b){a=String(a||"").toUpperCase().trim();b=String(b||"").toUpperCase().trim();return !!a&&!!b&&(a===b||b.indexOf(a)===0||a.indexOf(b)===0)}
 var H=D.heads,ROWS=D.fils.length?D.fils.slice(0,4):H.map(function(h,i){return{index:i,colour:h.colour,type:h.mat}});
 function calc(){var res=ROWS.map(function(){return-1}),used={};
-  ROWS.forEach(function(f,i){var v=D.cur[i];if(!(v>=0&&v<4))v=i;var h=H[v];if(h&&h.loaded!==false&&!used[v]&&sameMat(f.type,h.mat)&&cdist(f.colour,h.colour)<=300){res[i]=v;used[v]=1}});
-  var pairs=[];ROWS.forEach(function(f,i){if(res[i]>=0)return;H.forEach(function(h){if(h.loaded===false)return;pairs.push({i:i,h:h.i,d:cdist(f.colour,h.colour)+(sameMat(f.type,h.mat)?0:1000)})})});
+  ROWS.forEach(function(f,i){if(f.used===false){res[i]=i;return}var v=D.cur[i];if(!(v>=0&&v<4))v=i;var h=H[v];if(h&&h.loaded!==false&&!used[v]&&sameMat(f.type,h.mat)&&cdist(f.colour,h.colour)<=300){res[i]=v;used[v]=1}});
+  var pairs=[];ROWS.forEach(function(f,i){if(res[i]>=0||f.used===false)return;H.forEach(function(h){if(h.loaded===false)return;pairs.push({i:i,h:h.i,d:cdist(f.colour,h.colour)+(sameMat(f.type,h.mat)?0:1000)})})});
   pairs.sort(function(a,b){return a.d-b.d});pairs.forEach(function(p){if(res[p.i]<0&&!used[p.h]){res[p.i]=p.h;used[p.h]=1}});
-  ROWS.forEach(function(f,i){if(res[i]>=0)return;var b=-1,bd=1e9;H.forEach(function(h){if(h.loaded===false)return;var d=cdist(f.colour,h.colour);if(d<bd){bd=d;b=h.i}});res[i]=b>=0?b:i});return res}
+  ROWS.forEach(function(f,i){if(res[i]>=0||f.used===false)return;var b=-1,bd=1e9;H.forEach(function(h){if(h.loaded===false)return;var d=cdist(f.colour,h.colour);if(d<bd){bd=d;b=h.i}});res[i]=b>=0?b:i});return res}
 function auto(){var r=calc();ROWS.forEach(function(f,i){MAP[i]=r[i]});draw()}
 function pick(i,h){if(H[h]&&H[h].loaded===false)return;var old=MAP[i];for(var j=0;j<ROWS.length;j++){if(j!==i&&MAP[j]===h){MAP[j]=old;break}}MAP[i]=h;CONF=false;draw()}
 function wedge(a0,a1,r1,r2){function q(r,a){return (r*Math.cos(a)).toFixed(2)+" "+(r*Math.sin(a)).toFixed(2)}return "M"+q(r2,a0)+" A"+r2+" "+r2+" 0 0 1 "+q(r2,a1)+" L"+q(r1,a1)+" A"+r1+" "+r1+" 0 0 0 "+q(r1,a0)+" Z"}
 function spool(c,z){c=esc(c||"#808080");z=z||20;var k="rgba(0,0,0,.6)",s='<svg viewBox="-50 -50 100 100" width="'+z+'" height="'+z+'" style="flex:none;vertical-align:middle"><circle r="47" fill="'+c+'" stroke="'+k+'" stroke-width="4"/>';for(var i=0;i<6;i++){var m=i*Math.PI/3-Math.PI/2;s+='<path d="'+wedge(m-.36,m+.36,20,38)+'" fill="#1b1d20" stroke="'+k+'" stroke-width="3" stroke-linejoin="round"/>'}return s+'<circle r="13" fill="'+c+'" stroke="'+k+'" stroke-width="4"/><circle r="6" fill="#1b1d20" stroke="'+k+'" stroke-width="2"/></svg>'}
-function draw(){var users={},warn=[],h="";ROWS.forEach(function(f,i){users[MAP[i]]=(users[MAP[i]]||0)+1});
-  ROWS.forEach(function(f,i){var hd=H[MAP[i]]||{},ok=hd.loaded!==false&&sameMat(f.type,hd.mat)&&cdist(f.colour,hd.colour)<=300;
-    if(!ok)warn.push(hd.loaded===false?"Toolhead "+(MAP[i]+1)+" is empty: load filament before printing filament "+(i+1)+".":"Filament "+(i+1)+" ("+cname(f.colour)+" "+(f.type||"")+") does not match toolhead "+(MAP[i]+1)+" ("+(hd.colour?cname(hd.colour):"no colour")+" "+(hd.mat||"")+"). Pick another or send anyway.");
+function draw(){var users={},warn=[],h="";ROWS.forEach(function(f,i){if(f.used===false)return;users[MAP[i]]=(users[MAP[i]]||0)+1});
+  ROWS.forEach(function(f,i){if(f.used===false)return;var hd=H[MAP[i]]||{},ok=hd.loaded!==false&&sameMat(f.type,hd.mat)&&cdist(f.colour,hd.colour)<=300;
+    if(!ok)warn.push(hd.loaded===false?"Toolhead T"+MAP[i]+" is empty: load filament before printing filament "+(i+1)+".":"Filament "+(i+1)+" ("+cname(f.colour)+" "+(f.type||"")+") does not match toolhead T"+MAP[i]+" ("+(hd.colour?cname(hd.colour):"no colour")+" "+(hd.mat||"")+"). Pick another or send anyway.");
     h+='<div class="r '+(ok?'ok':'')+'">'+spool(f.colour,28)+'<div class="n">Filament '+(i+1)+'<small>'+esc(f.type||"")+'</small></div>'
     +H.map(function(x){var off=x.loaded===false;return'<button class="h'+(MAP[i]===x.i?' sel':'')+(off?' off':'')+'" onclick="pick('+i+','+x.i+')"><i style="background:'+(off?'transparent':esc(x.colour||"#808080"))+'"></i>T'+x.i+' '+(off?'empty':esc(x.mat||""))+'</button>'}).join("")
     +'<span class="st" style="color:'+(ok?'#35c46a':'#e0a030')+'">'+(ok?'MATCH':'CHECK')+'</span></div>'});
-  Object.keys(users).forEach(function(k){if(users[k]>1)warn.push("Toolhead "+(Number(k)+1)+" will print "+users[k]+" file colours with the same filament.")});
+  Object.keys(users).forEach(function(k){if(users[k]>1)warn.push("Toolhead T"+Number(k)+" will print "+users[k]+" file colours with the same filament.")});
   $("rows").innerHTML=h;$("warn").innerHTML=warn.map(function(w){return'<div class="mw">&#9888; '+esc(w)+'</div>'}).join("")}
 var SAVED={};try{SAVED=JSON.parse(localStorage.getItem("wmdev_popup_maps")||"{}")||{}}catch(e){}
 function store(){try{localStorage.setItem("wmdev_popup_maps",JSON.stringify(SAVED))}catch(e){}}
@@ -2215,10 +2302,11 @@ function sv(){var n=($("nm").value||"").replace(/[<>"']/g,"").trim();if(!n)retur
 function ld(i){var v=SAVED[Object.keys(SAVED)[i]];if(v&&v.length===4){MAP=v.slice();draw()}$("sv").style.display="none"}
 function dl(i){delete SAVED[Object.keys(SAVED)[i]];store();$("sv").style.display="none"}
 var CONF=false;
-function badMat(){var o=[];ROWS.forEach(function(f,i){var hd=H[MAP[i]]||{};if(hd.loaded!==false&&f.type&&hd.mat&&!sameMat(f.type,hd.mat))o.push("Filament "+(i+1)+" is "+f.type+" but toolhead "+(MAP[i]+1)+" has "+hd.mat)});return o}
+function badMat(){var o=[];ROWS.forEach(function(f,i){if(f.used===false)return;var hd=H[MAP[i]]||{};if(hd.loaded!==false&&f.type&&hd.mat&&!sameMat(f.type,hd.mat))o.push("Filament "+(i+1)+" is "+f.type+" but toolhead T"+MAP[i]+" has "+hd.mat)});return o}
 function done(a){if((a==="upload"||a==="print")&&!CONF){var b=badMat();if(b.length){CONF=true;$("warn").innerHTML='<div class="mw bad">&#9888; Different material: '+esc(b.join("; "))+'. Press the button again to continue anyway, or pick another toolhead.</div>'+$("warn").innerHTML;return}}
   orca.submit({action:a,map:MAP.slice(0,4)})}
-$("sub").textContent=D.file+" · "+ROWS.length+" filament"+(ROWS.length===1?"":"s")+" · printer "+D.host;
+var USEDN=ROWS.filter(function(f){return f.used!==false}).length;
+$("sub").textContent=D.file+" · "+USEDN+" filament"+(USEDN===1?"":"s")+" · printer "+D.host;
 $("note").textContent=D.note||"";
 (function(){var m=D.mem;if(m&&m.length===4&&ROWS.length&&m.every(function(v){return v>=0&&v<4&&!(H[v]&&H[v].loaded===false)})){MAP=m.slice();draw();$("note").textContent="Map from the last print of this project";}else auto()})();
 </script></body></html>"""
@@ -2355,6 +2443,11 @@ def ask_tool_map(path, name, ui=None):
         _trace("filaments done " + str(ferr)[:80])
         if ferr:
             note = "Orca filaments not available: showing the printer's own tools"
+        else:
+            # read_orca_filaments() lists every filament slot CONFIGURED in the project; mark the ones
+            # this particular sliced file never actually touches (e.g. 2 of 4 slots used) so the popup's
+            # JS can leave them out of the list and the warnings, without changing their slot numbers.
+            fils = mark_filament_usage(fils, path)
         key = mem_key(name, len(fils) or HEADS)
         _trace("mem_load " + key)
         mem = mem_load(key)

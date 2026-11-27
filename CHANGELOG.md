@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.29.21
+- Fixed: the "unused filament not mapped" fix in 0.29.20 read the wrong part of the exported G-code file. OrcaSlicer writes the `; filament used [mm] = ...` line in the file's **footer** (near the end), not near the top - the 0.29.20 check only scanned the first 300 lines, so it never found the line and silently fell back to showing every filament again. The plugin now reads the last 16 KiB of the file instead, where that line actually is.
+
+## 0.29.20
+- Fixed: the **WM Tool Map** window (after slicing) listed, warned about and asked you to map **every filament configured in the Orca project**, even ones your current print doesn't use at all. It now reads which filament slots the slice actually used (from the file's own "filament used" line) and only shows, matches and warns about those - a project with 4 filaments where only 2 are in this print now shows just those 2. An unused slot is never removed from the toolhead map itself (only hidden from the window), so the slot numbers written into the G-code stay correctly aligned even when the used slots aren't the first ones. If the usage line can't be read for any reason, the window falls back to showing everything, same as before.
+
+## 0.29.19
+- Fixed: the **WM Tool Map** window's warning text (both the post-slice popup and the live mapping panel in the Device tab) numbered toolheads one higher than the toolhead buttons themselves - a warning could say "toolhead 2" about the exact same toolhead its own button labelled "T1". Warning text now always matches the button labels (T0, T1, T2, T3).
+- Fixed: the **Light** button's colour didn't reflect the chamber light's real on/off state on printers using a `WM_CHAMBER_LIGHT` Klipper macro (the vanilla Klipper setup) - only factory printers with the optional live screen refresh helper had this. The light is a Moonraker `[power chamber_light]` device on these printers, so the plugin now reads and sets its real state straight over Moonraker's own `device_power` API, no extra helper needed. The button now turns green while the light is on there too.
+- Added an offline self-test suite (`tests/`, run with `tests/run_all.sh`) covering the toolhead-numbering fix, the unused-filament fix, and the chamber-light state sync, so a future change to this logic can be checked without a real printer.
+
 ## 0.29.18
 - Fixed: the **Screen live-refresh helper** card (and the "Install helper on printer" button) could show up on a **vanilla (upstream) Klipper** printer too, not just factory printers. The card's visibility check only looked for `tmt1.ini` existing - but a vanilla Klipper + Fluidd setup keeps a `tmt1.ini` too (for the same colour/material swatches), so its presence alone never meant "factory screen board". The check now also confirms the printer lacks the vanilla installer's `_ZR_SET_TOOL_INFO` macro, the same signal already used elsewhere in the plugin to tell factory and vanilla printers apart.
 
