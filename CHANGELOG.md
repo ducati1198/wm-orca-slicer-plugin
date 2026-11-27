@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.24
+- Changed: PLA nozzle temperature default is now 220 C for all PLA types. Matches the printer-side material table (Klipper, ACE driver and KlipperScreen) on both the production printer and the test pair. Updated in the `ZRT` default-temperature table used by the Spool editor's material dropdown (`spMat()`) to pre-fill the **Nozzle temp** box: **PLA**, **PLA Silk**, **PLA Matte**, **PLA Metal** and **PLA+** move from 210/215 C to 220 C; **PLA-CF** was already 220 C. No other material's default changed, and no macro names, arguments or material numbers changed - the plugin still calls `_ZR_SET_TOOL_INFO T= HEX= MAT= TEMP=` exactly as before.
+
 ## 0.29.23
 - Fixed: the ACE Pro **Dryer** card's "Status" and "Time left" could show `-` even while the dryer was actively running. The per-dryer status comes from Moonraker's `ace_instance_N` object, which passes the ACE firmware's raw response straight through; on some firmware/protocol versions that block is keyed `dryer_status` instead of `dryer` (the driver's own console command already checks both names for exactly this reason - this plugin's read did not). Now checks both.
 - Changed: the Dryer card's run-duration input is now separate **Hours** and **Minutes** fields instead of one "Minutes" box, so you don't need to compute e.g. 242 minutes by hand for a ~4-hour dry. Sends the same total-minutes value to `_ACE_WM_DRY_START` as before.

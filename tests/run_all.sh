@@ -32,7 +32,17 @@ else
   JS2_STATUS=0
 fi
 
-if [ "$PY_STATUS" -ne 0 ] || [ "$JS_STATUS" -ne 0 ] || [ "$JS2_STATUS" -ne 0 ]; then
+echo ""
+echo "== JavaScript suite (PLA nozzle temperature defaults) =="
+if command -v node >/dev/null 2>&1; then
+  node "$HERE/test_pla_temps.js" "$TARGET"
+  JS3_STATUS=$?
+else
+  echo "node not found on this machine - skipping (install Node.js to run it, e.g. via nodejs.org or brew install node)"
+  JS3_STATUS=0
+fi
+
+if [ "$PY_STATUS" -ne 0 ] || [ "$JS_STATUS" -ne 0 ] || [ "$JS2_STATUS" -ne 0 ] || [ "$JS3_STATUS" -ne 0 ]; then
   echo ""
   echo "SUITE FAILED - do not ship this file yet."
   exit 1

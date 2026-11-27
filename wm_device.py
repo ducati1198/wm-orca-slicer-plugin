@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.23"
+# version = "0.29.24"
 # ///
-"""WM Device v0.29.23.
+"""WM Device v0.29.24.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -1573,7 +1573,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.23</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.24</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1808,7 +1808,7 @@ var SPC=[["White","FFFFFF"],["Beige","F3E8C8"],["Brown","9A6738"],["Grey","C7D5D
 var ZRM=["PLA","PLA Silk","ABS","PETG","PLA Matte","PLA Metal","ABS Matte","PETG Matte","PVA","TPE","Marble","HIPS","TPU","PET","Wood","ASA","PLA+","PLA-CF","PETG-CF","PA","PA-CF","PC","ABS-CF","PA-GF","PC-ABS","PP","BVOH"];
 var ZRC=[1,3,8,6,4,15,8,6,13,10,15,14,10,15,15,9,2,5,7,11,11,12,8,11,12,15,10];
 var ZRV=false;
-var ZRT=[210,215,250,240,210,215,250,240,200,225,210,235,225,240,200,255,215,220,250,270,280,270,260,280,260,230,210];
+var ZRT=[220,220,250,240,220,220,250,240,200,225,210,235,225,240,200,255,220,220,250,270,280,270,260,280,260,230,210];
 function spMat(){if(ZRV)return;var mi=parseInt($("spM").value);$("spN").value=mi>=0?ZRT[mi]:""}
 var SPI=0,SLOTS=[];
 var HSV=[0,1,1];
