@@ -3,11 +3,11 @@
 #
 # [tool.orcaslicer.plugin]
 # name = "WM Device"
-# description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on."
+# description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.10"
+# version = "0.29.17"
 # ///
-"""WM Device v0.29.10.
+"""WM Device v0.29.17.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -197,7 +197,109 @@ def chamber_light_live(base, action, timeout=3):
                 return data["state"]
             return None
     except Exception:
-        return False
+        return None
+
+
+# One-click installer for the OPTIONAL wm-screen-sync-http helper (README 2.4b). macOS/Linux only
+# for now (Windows falls back to the manual SSH/README instructions).
+HELPER_INSTALL_CMD = (
+    "curl -fsSL https://raw.githubusercontent.com/ducati1198/wm-orca-slicer-plugin/main/"
+    "screen-sync/install_screen_sync.sh | sudo bash"
+)
+_WM_SSH_OK = "WM_SSH_INSTALL_OK"
+_WM_SSH_FAIL = "WM_SSH_INSTALL_FAIL"
+
+
+def ssh_run_with_password(host, user, password, command, timeout=25):
+    """Runs one command on `host` over SSH, authenticating with `password` (no sshpass, no
+    paramiko - pure stdlib). Used only by the Device tab's "Install helper on printer" button, and
+    only after the person has confirmed it and typed (or kept the pre-filled factory default)
+    credentials; see on_message()'s "install_helper" handler and the README's 2.4b.
+
+    Deliberately does NOT fork this process (no os.fork(), no pty, no preexec_fn). An earlier
+    version used fork()+setsid()+TIOCSCTTY+execvp to drive a real controlling-terminal SSH session,
+    which crashed OrcaSlicer outright on macOS with a CoreFoundation fork-safety abort
+    ("...YOU_CANNOT_USE_THIS_COREFOUNDATION_FUNCTIONALITY...YOU_MUST_EXEC...") - confirmed by a
+    battery of isolated tests: fork alone, setsid alone, the TIOCSCTTY ioctl alone and the dup2
+    redirects alone are all individually safe, but that same sequence immediately followed by
+    execvp (to launch the real `ssh` binary) reliably takes the whole host app down, not just the
+    child. Setting OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES did not help (confirmed by real-world
+    retest - the guard fires at a point this runtime env var can no longer reach).
+
+    Instead this uses OpenSSH's SSH_ASKPASS_REQUIRE=force (OpenSSH >= 8.4, present on current
+    macOS/Linux builds) so ssh itself invokes a tiny disposable one-line helper script for the
+    password, instead of needing a controlling terminal at all. The whole thing runs through a
+    plain subprocess.run() call - no fork(), no preexec_fn, no pty - which CPython implements via
+    posix_spawn() on macOS/Linux, a code path the CoreFoundation fork-safety guard does not
+    instrument. Verified end-to-end against a real printer with no crash.
+
+    The disposable askpass script is written inside this plugin's own _own_dir() (same folder
+    hosts.json already lives in), NOT via tempfile.mkstemp()/the system temp dir. Orca audits
+    plugin file operations per-plugin: tempfile.mkstemp() was denied outright for this plugin
+    ("Plugin attempted audited operation 'tempfile.mkstemp' without permission") even though the
+    exact same call was allowed inside a different, throwaway test plugin - Orca's own dialog said
+    to "use an allowed location", and _own_dir() is the one this plugin already writes to
+    successfully today. Returns (ok, output_text).
+    """
+    import stat
+    import subprocess
+    askpass_dir = _own_dir()
+    os.makedirs(askpass_dir, exist_ok=True)
+    askpass_path = os.path.join(askpass_dir, "wm_askpass_%d_%d.sh" % (os.getpid(), int(time.time() * 1000)))
+    try:
+        with open(askpass_path, "w") as f:
+            f.write("#!/bin/sh\necho \"%s\"\n" % password.replace("\\", "\\\\").replace('"', '\\"'))
+        os.chmod(askpass_path, stat.S_IRWXU)
+        env = dict(os.environ)
+        env["SSH_ASKPASS"] = askpass_path
+        env["SSH_ASKPASS_REQUIRE"] = "force"
+        env.pop("DISPLAY", None)
+        argv = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=8",
+                "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
+                "%s@%s" % (user, host), command]
+        try:
+            proc = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            partial = (exc.output or b"").decode(errors="replace") if exc.output else ""
+            return False, "timed out reaching the printer over SSH:\n" + partial
+        out = proc.stdout.decode(errors="replace")
+        return proc.returncode == 0, out
+    finally:
+        try:
+            os.remove(askpass_path)
+        except OSError:
+            pass
+
+
+def install_screen_sync_helper(base, user, password):
+    """Installs the optional wm-screen-sync-http helper on the printer's screen board over SSH -
+    the same one-liner the README's 2.4b has the person run by hand, just typed for them after they
+    confirm the warning popup. `base` is the Moonraker base URL already in use for this printer
+    (same host, different port), so no separate IP entry is needed."""
+    host = urllib.parse.urlsplit(base).hostname
+    if not host:
+        return False, "no printer host known yet - open the Device tab and let it connect first"
+    if os.name == "nt":
+        return False, ("one-click install isn't available on Windows yet - see the README's "
+                        "2.4b section for the manual SSH steps")
+    # the command's own success/fail sentinel is what we trust, not ssh's process exit code alone
+    # (belt and suspenders: a flaky exit-status path should never show "Installed" on a failure)
+    wrapped = "(" + HELPER_INSTALL_CMD + ") && echo " + _WM_SSH_OK + " || echo " + _WM_SSH_FAIL
+    try:
+        exited_ok, out = ssh_run_with_password(host, user, password, wrapped)
+    except Exception as exc:  # noqa: BLE001
+        return False, "install failed: %r" % exc
+    tail = "\n".join(out.strip().splitlines()[-12:])
+    if "assword" in out and "Permission denied" in out:
+        return False, "wrong username or password for this printer"
+    if ("Could not resolve hostname" in out or "No route to host" in out
+            or "Connection refused" in out or "Connection timed out" in out):
+        return False, "could not reach the printer over SSH:\n" + tail
+    if _WM_SSH_OK in out and exited_ok:
+        return True, "Installed. " + tail
+    return False, "install did not finish cleanly:\n" + tail
 
 
 def upload_config(base, subdir, name, text):
@@ -532,6 +634,7 @@ class Poller:
         self.slots = [{"colour": "", "material": ""} for _ in range(HEADS)]
         self.has_tmt1 = False
         self.light_state = None   # "on" / "off" / None (unknown - no helper, or a real Klipper macro printer)
+        self.helper_ok = False   # True once the optional wm-screen-sync-http helper answers /light?action=status
         self.messages = []
         self.tick = 0
         self.print_state = ""
@@ -564,6 +667,7 @@ class Poller:
             self.tick = 0
             self.has_tmt1 = False
             self.light_state = None
+            self.helper_ok = False
         self.ping = time.time()
         if base and (self.thread is None or not self.thread.is_alive()):
             self.stop.clear()
@@ -597,6 +701,7 @@ class Poller:
                         # factory printer with no Klipper light macro: ask the optional live helper
                         # for the real state, so the Light button can show it as on/off.
                         st = chamber_light_live(base, "status", timeout=1.5)
+                        self.helper_ok = st is not None
                         if st is not None:
                             self.light_state = st
                     try:
@@ -614,7 +719,7 @@ class Poller:
                 self.kstate = (status.get("webhooks") or {}).get("state", "")
                 self.post({"type": "state", "base": base, "status": status, "time": time.time(), "cams": self.cams,
                            "slots": merge_saved(self.slots, status), "messages": self.messages, "hasTmt1": self.has_tmt1,
-                           "lightOn": self.light_state})
+                           "lightOn": self.light_state, "helperOk": self.helper_ok})
                 try:
                     self.scan_prompts(base)
                 except Exception:  # noqa: BLE001
@@ -906,7 +1011,7 @@ class Poller:
         if self.last:
             self.post({"type": "state", "base": self.base, "status": self.last, "time": time.time(), "cams": self.cams,
                        "slots": merge_saved(self.slots, self.last), "messages": self.messages, "hasTmt1": self.has_tmt1,
-                       "lightOn": self.light_state})
+                       "lightOn": self.light_state, "helperOk": self.helper_ok})
         return TOUCH_PALETTE[cidx][0]
 
     def action(self, p):
@@ -1220,6 +1325,19 @@ button.danger:hover:not(:disabled){background:#d9534f;border-color:#d9534f;color
 .b-ok{background:var(--g);color:#fff;border-color:var(--g)}.b-no{background:#888;color:#fff;border-color:#888}
 #toast{display:none;position:fixed;right:16px;bottom:16px;padding:10px 14px;border-radius:6px;background:#2b7bd8;color:#fff;font-weight:600;z-index:9}
 #confirm{display:none;border:1px solid #d9a21b;border-radius:4px;padding:10px 14px;margin-bottom:12px;background:rgba(217,162,27,.12)}
+#helperCard{display:none;border:1px solid var(--orca-border);border-radius:10px;padding:12px 14px;margin:12px 0;background:var(--panel)}
+#helperCard .hdr{font-weight:600;margin-bottom:4px}
+#helperCard .sub{font-size:12px;color:var(--orca-muted);margin-bottom:10px;line-height:1.5}
+#helperInstallBtn{display:inline-flex;align-items:center;gap:6px}
+#helperOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;align-items:center;justify-content:center}
+#helperModal{background:var(--orca-bg);border:1px solid var(--orca-border);border-radius:10px;padding:18px 20px;max-width:380px;width:92%}
+#helperModal .hwarn{background:rgba(217,162,27,.14);border:1px solid #d9a21b;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;margin:10px 0 14px}
+#helperModal label{font-size:11px;color:var(--orca-muted);display:block;margin-bottom:3px}
+#helperModal .frow{display:flex;gap:10px;margin-bottom:14px}
+#helperModal .frow>div{flex:1}
+#helperModal input{width:100%;box-sizing:border-box}
+#helperModal .brow{display:flex;gap:8px;justify-content:flex-end}
+#helperResult{font-size:12px;margin-top:8px;line-height:1.5;white-space:pre-wrap}
 .file{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--orca-border)}
 .msg{font-family:Menlo,monospace;font-size:11px;padding:4px 0;border-top:1px solid var(--orca-border);word-break:break-all}
 .ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}
@@ -1386,7 +1504,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.10</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.17</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1456,7 +1574,16 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div style="position:relative"><div class="mvcap" style="position:absolute;top:-20px;left:0;right:0;margin:0">Z axis</div><div class="mvcol" style="height:224px;grid-template-rows:1fr 1fr"><div class="k" onclick="mv('z',1)" style="height:auto;min-width:64px">&#9650; Z+</div><div class="k" onclick="mv('z',-1)" style="height:auto;min-width:64px">&#9660; Z-</div></div></div>
 
 <div><div class="mvcap">Step (mm)</div><div class="seg" id="mvStep"><span onclick="setStep(1)">1</span><span class="on" onclick="setStep(10)">10</span><span onclick="setStep(50)">50</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px"><div class="k" id="btnLight" onclick="act({kind:'light'})">Light</div><div class="k" onclick="doAct({kind:'homez'},'Home Z? The toolhead will move.')">Home Z</div><div class="k" onclick="doAct({kind:'motoroff'},'Motors off?')">Motors off</div><div class="k" id="btnUnload" onclick="act({kind:'unloadmenu'})" style="background:var(--g);border-color:var(--g);color:#fff">Unload Menu</div></div></div>
-</div><div class="muted" style="margin-top:10px">Moves apply at once. Not while printing. Z+ and Z- are the printer's Z coordinate.</div><div class="pm"><div><small>X / Y / Z</small><span id="pos">-</span></div><div><small>Homed</small><span id="homed">-</span></div><div><small>Idle timeout</small><span id="idle">-</span></div><div><small>Extrusion factor</small><span id="ext">-</span></div></div></div></div>
+</div><div class="muted" style="margin-top:10px">Moves apply at once. Not while printing. Z+ and Z- are the printer's Z coordinate.</div><div class="pm"><div><small>X / Y / Z</small><span id="pos">-</span></div><div><small>Homed</small><span id="homed">-</span></div><div><small>Idle timeout</small><span id="idle">-</span></div><div><small>Extrusion factor</small><span id="ext">-</span></div></div></div>
+<div id="helperCard"><div class="hdr">Screen live-refresh helper</div><div class="sub" id="helperSub">Not installed. Without it, the Light button can't control the chamber light, and a spool colour/material change saved here only shows up on the touchscreen after its app restarts.</div><button id="helperInstallBtn" class="k" style="background:var(--g);border-color:var(--g);color:#fff;width:auto" onclick="openInstallHelper()">Install helper on printer</button><div id="helperResult"></div></div>
+</div>
+<div id="helperOverlay"><div id="helperModal">
+<div style="font-weight:600;margin-bottom:6px">Install the screen helper on your printer?</div>
+<div style="font-size:12px;color:var(--orca-muted);line-height:1.6">This connects to your printer over SSH and installs a small background service (wm-screen-sync-http). It runs independently of Klipper - no restart needed.</div>
+<div class="hwarn">Only do this on a printer you own. These are pre-filled with the factory default login - change them if you've set your own.</div>
+<div class="frow"><div><label>Username</label><input id="helperUser" type="text" value="t13dp"></div><div><label>Password</label><input id="helperPass" type="password" value="TM88888"></div></div>
+<div id="helperModalResult"></div><div class="brow"><button onclick="closeInstallHelper()">Cancel</button><button id="helperGo" style="background:var(--g);border-color:var(--g);color:#fff" onclick="confirmInstallHelper()">Install</button></div>
+</div></div>
 <div class="panel"><div class="ph">Controls</div><div class="pb cx cxrow">
 <div class="cxc"><div class="cxl">Temperature</div>
 <div class="thd"><span>Heater</span><span>Now</span><span>Target</span><span></span></div>
@@ -1494,7 +1621,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="muted" id="upd" style="margin-top:10px"></div>
 </div>
 <script>
-var BASE="",CAMS=[],camOn=true,STATE="",PENDING=null,HASTMT1=false,LIGHTON=null;
+var BASE="",CAMS=[],camOn=true,STATE="",PENDING=null,HASTMT1=false,LIGHTON=null,HELPEROK=false;
 function $(i){return document.getElementById(i)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function t(v){return (v===undefined||v===null)?"-":(Math.round(v*10)/10).toFixed(1)+" °C"}
@@ -1627,6 +1754,20 @@ function saveSpool(){var hx=$("spH").value.replace("#","").toUpperCase(),tp=$("s
 function hideConfirm(){PENDING=null;$("confirm").style.display="none"}
 function showConfirm(text,fn){PENDING=fn;$("confirmText").textContent=text;$("confirm").style.display="block"}
 $("confirmYes").onclick=function(){var f=PENDING;hideConfirm();if(f)f()};
+function openInstallHelper(){$("helperModalResult").textContent="";$("helperResult").textContent="";$("helperOverlay").style.display="flex"}
+function closeInstallHelper(){$("helperOverlay").style.display="none"}
+function confirmInstallHelper(){
+  var user=($("helperUser").value||"").trim(),pass=$("helperPass").value||"";
+  if(!user||!pass){$("helperModalResult").className="err";$("helperModalResult").textContent="Enter a username and password first";return}
+  $("helperModalResult").textContent="";
+  $("helperGo").disabled=true;$("helperGo").textContent="Installing...";
+  orca.postMessage({type:"install_helper",user:user,password:pass})}
+function onInstallHelperResult(ok,detail){
+  $("helperGo").disabled=false;$("helperGo").textContent="Install";
+  if(ok){
+    closeInstallHelper();HELPEROK=true;var hc=$("helperCard");if(hc)hc.style.display="none";
+    $("helperResult").className="ok";$("helperResult").textContent=detail||"Installed."}
+  else{$("helperModalResult").className="err";$("helperModalResult").textContent=detail||"Install failed"}}
 function ask(cmd){
   if(cmd==="cancel")showConfirm("Cancel the running print? This cannot be undone.",function(){send(cmd)});
   else send(cmd)}
@@ -1697,6 +1838,7 @@ function renderFil(s,sl){
   var vars=((s.save_variables||{}).variables)||{};
   var busy=(STATE==="printing"||STATE==="paused");
   var bu=$("btnUnload");if(bu)bu.style.display=s["gcode_macro WM_UNLOAD_MENU"]?"":"none";var bl=$("btnLight");if(bl){bl.style.display=(s["gcode_macro WM_CHAMBER_LIGHT"]||HASTMT1)?"":"none";bl.classList.toggle("on",LIGHTON==="on")}
+  var hc=$("helperCard");if(hc)hc.style.display=(HASTMT1&&!HELPEROK)?"block":"none";
   var hasAce=!!(s["gcode_macro _WM_ACE"]||s.ace||s.ace_instance_0);
   var pro=s["output_pin ACE_Pro"],aut=s["output_pin ACE_Auto_Load"];
   var box=$("aceSw");box.style.display=(hasAce&&(pro||aut))?"block":"none";
@@ -1784,7 +1926,7 @@ function ex(d){act({kind:"extrude",dist:d})}
 function swatch(c){return c?'<span class="sw" style="background:'+esc(c)+'"></span>':''}
 function render(m){
   var s=m.status||{},ps=s.print_stats||{},ds=s.display_status||{},vs=s.virtual_sdcard||{};
-  HASTMT1=!!m.hasTmt1;if(m.lightOn!==undefined)LIGHTON=m.lightOn;
+  HASTMT1=!!m.hasTmt1;if(m.lightOn!==undefined)LIGHTON=m.lightOn;if(m.helperOk!==undefined)HELPEROK=!!m.helperOk;
   BASE=m.base;CAMS=m.cams||[];if(camOn&&!$("cam").getAttribute("src"))setCam();
   if(FIRST){FIRST=false;loadFiles();loadHist()}
   $("err").textContent="";$("conn").textContent="connected to "+m.base.replace("http://","");$("navTxt").textContent=m.base.replace("http://","").replace(":7125","");$("navDot").className="dot on";
@@ -1841,6 +1983,7 @@ orca.onMessage(function(m){
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
   if(m.type==="prompt"){var pm=$("pmodal");if(m.close||!m.prompt){pm.style.display="none"}else{showPrompt(m.prompt)}}
   if(m.type==="result"){$("res").className=m.ok?"ok":"err";$("res").textContent=m.text;if(m.lightOn!==undefined){LIGHTON=m.lightOn;var bl=$("btnLight");if(bl)bl.classList.toggle("on",LIGHTON==="on")}}
+  if(m.type==="install_helper_result"){onInstallHelperResult(m.ok,m.detail)}
   if(m.type==="probe"){$("probetxt").value=m.text||""}
   if(m.type==="timelapse"){TLV=m.vids||[];TLERR=m.error||"";renderTL()}
   if(m.type==="history"){HJOBS=m.jobs||[];HTOT=m.totals||null;HERR=m.error||"";renderHist()}
@@ -2455,8 +2598,23 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
             elif kind == "command":
                 threading.Thread(target=self.poller.command, daemon=True,
                                  args=(str(message.get("name", "")), str(message.get("file", "")))).start()
+            elif kind == "install_helper":
+                user = str(message.get("user", "") or "")
+                password = str(message.get("password", "") or "")
+                threading.Thread(target=self._install_helper, daemon=True, args=(user, password)).start()
         except Exception:  # noqa: BLE001
             pass
+
+    def _install_helper(self, user, password):
+        """Runs on a background thread (see on_message's "install_helper"): SSHes into the
+        printer's screen board and installs the optional wm-screen-sync-http helper, then reports
+        back to the page. Never raises into the plugin's own message loop."""
+        try:
+            base = self.poller.base if self.poller is not None else ""
+            ok, detail = install_screen_sync_helper(base, user, password)
+        except Exception as exc:  # noqa: BLE001
+            ok, detail = False, "install failed: %r" % exc
+        self._post({"type": "install_helper_result", "ok": ok, "detail": detail})
 
 
 @orca.plugin

@@ -200,7 +200,22 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 
 You do not need this to use the plugin. On a factory printer, a spool change is always written to `tmt1.ini` (the touchscreen's own colour/material file); without this helper, the touchscreen shows it the next time its app restarts.
 
-Installing this small helper makes the touchscreen update immediately, with no restart. It is one command, run once, over SSH:
+Installing this small helper makes the touchscreen update immediately, with no restart, and also lets the **Light** button (2.3) control and show the real chamber light. There are two ways to install it:
+
+**Option A - from the Device tab (one click, macOS/Linux builds of Orca)**
+
+When the helper is not detected on a factory printer, the Device tab shows a **Screen live-refresh helper** card with an **Install helper on printer** button:
+
+1. Press **Install helper on printer**.
+2. Confirm the warning popup.
+3. Keep (or edit) the pre-filled factory default username and password for the printer's screen board.
+4. The plugin connects to the printer over SSH and installs the helper for you - no terminal needed.
+
+Not available on Windows builds of Orca yet; use Option B below instead.
+
+**Option B - from a terminal (any OS)**
+
+It is one command, run once, over SSH:
 
 1. Find your printer's IP address (the same one you use in the Device tab).
 2. SSH into the **screen board** (not Fluidd/Moonraker) as its factory user:
@@ -219,12 +234,13 @@ On a factory printer, installing this helper also lets the **Light** button (2.3
 
 What it installs: one small Python service (`wm_screen_sync_http.py`, [screen-sync/](screen-sync/)) that runs as root and listens on port 8766. It only ever re-reads `tmt1.ini` and copies the same colour/material numbers into the running screen app's memory — it never touches Klipper and never sends G-code. Like Fluidd/Moonraker itself, it has no login of its own, so only install it on a network you trust.
 
-To remove it again:
+To remove it again (there is no uninstall button in the tab yet - this always needs the terminal):
 ```
 sudo systemctl disable --now wm-screen-sync-http
 sudo rm -f /usr/local/sbin/wm-screen-sync-http /etc/systemd/system/wm-screen-sync-http.service
 sudo systemctl daemon-reload
 ```
+Run the three lines together: deleting the files without first running `systemctl disable --now` leaves the service running in memory with its files already gone, until the next reboot.
 
 ### 2.4 ACE Pro and Endless spool
 
@@ -344,6 +360,9 @@ The plugin finds out which of the two applies by asking the printer whether the 
 | Permissions are empty again after an update | Orca clears them on every plugin update. Approve the dialog again or re-add the printer in the **Permissions** tab |
 | Camera stays black | Press **Refresh camera**. If it stays black, open `http://<address>/webcam/?action=stream` in a browser to check the printer's camera |
 | Pi and a printer on the factory Klipper in the same list | That works. The plugin checks which one has the `WM_SET_TOOL_MAP` macro for each |
+| "Install helper on printer" says wrong username or password | The fields are pre-filled with the factory default; a printer with its login changed needs the real one typed in |
+| "Install helper on printer" says it could not reach the printer | Make sure the printer is on and the Device tab is connected to it first |
+| No "Install helper on printer" button shows | It only appears on a factory printer where the helper is not yet detected, and only on macOS/Linux builds of Orca. On Windows, use Option B in [2.4b](#24b-factory-printers-live-screen-refresh-optional) |
 
 If you ask for help, give the plugin version (shown at the bottom of the tab's left menu) and what the red message says.
 

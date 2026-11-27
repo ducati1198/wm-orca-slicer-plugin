@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.29.11 - 0.29.17
+- **One-click installer:** when the live screen refresh helper is not detected on a factory printer (macOS/Linux builds of Orca), the Device tab now shows a **Screen live-refresh helper** card with an **Install helper on printer** button. It connects over SSH (factory default login pre-filled, editable) and installs the helper for you - no terminal needed. See the README's [2.4b, Option A](README.md#24b-factory-printers-live-screen-refresh-optional).
+- Fixed: the Light button could crash with a `TypeError` when the helper was unreachable (a helper-status check returned the wrong "not available" value instead of `None`).
+- Fixed: the "Screen live-refresh helper" card could stay invisible even when it should show, due to a CSS display bug (an inline style was cleared instead of set to `block`).
+- Fixed: clicking "Install helper on printer" could crash OrcaSlicer outright on macOS (a CoreFoundation fork-safety abort). The installer no longer forks the host process at all - it authenticates over SSH through OpenSSH's `SSH_ASKPASS_REQUIRE=force` mechanism, run via a plain `subprocess.run()` call instead of a forked pty session.
+- Fixed: the installer's one-time password-entry script is now written inside the plugin's own data folder instead of the system temp directory, avoiding an Orca plugin-sandbox permission denial ("audited operation tempfile.mkstemp").
+
 ## 0.29.10
 - **Plugin description updated** (shown in Orca's Install/Plugins dialog) to match 0.29.8/0.29.9: the chamber light button is now always shown on factory printers (previously it said the button was hidden without the live-refresh helper); clarified that controlling the light and the instant screen/colour updates both need that optional helper, and that the button turns green while the light is on.
 - **Orca Cloud listing description updated** (`docs/ORCA-CLOUD-LISTING.md`) to mention chamber light control.
