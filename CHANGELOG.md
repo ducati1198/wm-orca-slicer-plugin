@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.29.23
+- Fixed: the ACE Pro **Dryer** card's "Status" and "Time left" could show `-` even while the dryer was actively running. The per-dryer status comes from Moonraker's `ace_instance_N` object, which passes the ACE firmware's raw response straight through; on some firmware/protocol versions that block is keyed `dryer_status` instead of `dryer` (the driver's own console command already checks both names for exactly this reason - this plugin's read did not). Now checks both.
+- Changed: the Dryer card's run-duration input is now separate **Hours** and **Minutes** fields instead of one "Minutes" box, so you don't need to compute e.g. 242 minutes by hand for a ~4-hour dry. Sends the same total-minutes value to `_ACE_WM_DRY_START` as before.
+- Fixed: the Dryer card's "Time left" showed minutes mislabelled as hours (`remain_time` is reported in **seconds** by the ACE driver, not minutes) - a 90-minute dry could read as "90 h 0 min". Now formats correctly, e.g. "1h 30min".
+- Fixed: the WM Device tab's own **Printing Progress** percentage could read very differently from Fluidd's on the same file (e.g. 6% vs Fluidd's 29%). It now uses the same calculation Fluidd's default "File" progress mode uses - `virtual_sdcard.file_position` measured only across the file's actual gcode body (`gcode_start_byte`–`gcode_end_byte` from the file's Moonraker metadata), excluding OrcaSlicer's header/footer comment blocks - instead of a different, time-based estimate. Falls back to the plain file-position ratio when a file's metadata lacks those two byte offsets, same as Fluidd.
+- Added: the Printing Progress panel now also shows **Speed**, **Flow**, **Filament** (used so far, in meters) and **Layer** (current/total), matching OrcaSlicer's own native Device tab layout. Layer only populates if your printer profile's G-code calls `SET_PRINT_STATS_INFO` (see README) - Speed/Flow/Filament always populate from Klipper's own status objects.
+- Added an offline self-test suite extension (`tests/test_progress_and_dryer.js`) covering all of the above: the dryer time format, the dryer_status/dryer fallback, the Hours+Minutes duration conversion, the Fluidd-matching progress calculation, and the filament-used formatting.
+
 ## 0.29.21
 - Fixed: the "unused filament not mapped" fix in 0.29.20 read the wrong part of the exported G-code file. OrcaSlicer writes the `; filament used [mm] = ...` line in the file's **footer** (near the end), not near the top - the 0.29.20 check only scanned the first 300 lines, so it never found the line and silently fell back to showing every filament again. The plugin now reads the last 16 KiB of the file instead, where that line actually is.
 

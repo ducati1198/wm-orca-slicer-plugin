@@ -169,7 +169,7 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 
 | Page | What it shows |
 |---|---|
-| **Status** | Camera, print progress with **Pause / Resume / Stop**, the four toolheads (colour, material), Control and Move panels, temperatures, fans, speed, the ACE Pro panel when the printer has one |
+| **Status** | Camera, print progress (percentage, time estimates, **Speed**, **Flow**, **Filament** used and **Layer**) with **Pause / Resume / Stop**, the four toolheads (colour, material), Control and Move panels, temperatures, fans, speed, the ACE Pro panel when the printer has one |
 | **Files** | The gcode files on the printer. Start one with **Print** (asks first). Tick files and press **Delete** to remove them (asks first) |
 | **History** | The last 25 prints with picture, filament colours, weight and result, totals on top, **Print again** and **Delete** (list entries only) |
 | **Messages** | Errors and warnings of the printer's console, grouped |
@@ -177,6 +177,15 @@ The printer must run **Moonraker** (port 7125, the default). The plugin adds `:7
 <img src="docs/img/files-page.png" alt="WM Device tab, Files page: gcode files with part picture, filament spools, Print buttons, tick boxes and the red Delete button" width="900">
 
 *The Files page: each file with its picture, filament colours, weight and a **Print** button; tick boxes and the red **Delete** at the top.*
+
+The Status page's **Printing Progress** panel shows the percentage (matching Fluidd's own "File" calculation - file position relative to the gcode body, not OrcaSlicer's native Device tab estimate, which is a separate, core-Orca panel this plugin does not draw), time estimates, Speed and Flow (the live speed/flow factors), Filament used so far, and Layer. **Layer** only shows a number if your printer profile's G-code tells Klipper the layer count - add these two lines in OrcaSlicer's **Printer Settings → Custom G-code**:
+```
+# Machine start G-code (anywhere near the top):
+SET_PRINT_STATS_INFO TOTAL_LAYER=[total_layer_count]
+# Layer change G-code:
+SET_PRINT_STATS_INFO CURRENT_LAYER={layer_num+1}
+```
+Without these, Klipper's `print_stats.info` stays empty and Layer shows `-` (Speed, Flow and Filament always work, since they come from Klipper's own status objects, not the slicer's G-code).
 
 ### 2.2 The top bar
 
@@ -260,7 +269,7 @@ Lower on the Status page, the tab shows two cards. They appear only when the pri
 - **Swap on a tangle:** also swap when a tangle sensor pauses the print.
 - The ring and the chips (T1 to T4) show which toolhead is the spare for which, or **no spare**.
 
-**ACE Pro card:** the connection state (for example *connected, ready*), the **Dryer** (status, temperature, time left, and **Temp** and **Minutes** boxes with **Start** and **Stop**) and **Tool map and stats** (the ACE tool map, tool changes, purged length, cuts).
+**ACE Pro card:** the connection state (for example *connected, ready*), the **Dryer** (status, temperature, time left in **h/min**, and **Temp**, **Hours** and **Minutes** boxes with **Start** and **Stop**) and **Tool map and stats** (the ACE tool map, tool changes, purged length, cuts).
 
 ### 2.5 Filament in the file → toolhead
 

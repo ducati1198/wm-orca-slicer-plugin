@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.21"
+# version = "0.29.23"
 # ///
-"""WM Device v0.29.21.
+"""WM Device v0.29.23.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -672,6 +672,8 @@ class Poller:
         self.pgrp = 0
         self.pallow = set()
         self.ping = 0.0
+        self.pmfile = None   # filename the gcode_start_byte/gcode_end_byte cache below belongs to
+        self.pmbytes = None  # {"start": gcode_start_byte, "end": gcode_end_byte} for self.pmfile, or None
 
     def shutdown(self):
         """Stop polling for good (plugin unloaded / deactivated). Without this the old thread kept asking Orca for
@@ -757,9 +759,28 @@ class Poller:
                 self.print_state = (status.get("print_stats") or {}).get("state", "")
                 self.fails = 0
                 self.kstate = (status.get("webhooks") or {}).get("state", "")
+                cur_file = (status.get("print_stats") or {}).get("filename") or ""
+                if cur_file != self.pmfile:
+                    # new file (or no file): re-read its gcode_start_byte/gcode_end_byte once, cached until
+                    # the filename changes again. Fluidd's default "File" progress mode uses these two to
+                    # measure how far virtual_sdcard.file_position is through the actual gcode body, excluding
+                    # the header/footer comment blocks - without them the raw file-position ratio alone counts
+                    # OrcaSlicer's (often sizeable) header comments and footer stats as if they were print time,
+                    # which is why this plugin's own percentage could read very differently from Fluidd's on
+                    # the same file (reported B-098: 6% here vs 29% in Fluidd on the same gcode).
+                    self.pmfile, self.pmbytes = cur_file, None
+                    if cur_file:
+                        try:
+                            md = http_json(base + "/server/files/metadata?filename=" + urllib.parse.quote(cur_file, safe=""),
+                                            timeout=6)["result"]
+                            sb, eb = md.get("gcode_start_byte"), md.get("gcode_end_byte")
+                            if sb is not None and eb is not None:
+                                self.pmbytes = {"start": sb, "end": eb}
+                        except Exception:  # noqa: BLE001
+                            pass
                 self.post({"type": "state", "base": base, "status": status, "time": time.time(), "cams": self.cams,
                            "slots": merge_saved(self.slots, status), "messages": self.messages, "hasTmt1": self.has_tmt1,
-                           "lightOn": self.light_state, "helperOk": self.helper_ok})
+                           "lightOn": self.light_state, "helperOk": self.helper_ok, "fileBytes": self.pmbytes})
                 try:
                     self.scan_prompts(base)
                 except Exception:  # noqa: BLE001
@@ -1053,7 +1074,7 @@ class Poller:
         if self.last:
             self.post({"type": "state", "base": self.base, "status": self.last, "time": time.time(), "cams": self.cams,
                        "slots": merge_saved(self.slots, self.last), "messages": self.messages, "hasTmt1": self.has_tmt1,
-                       "lightOn": self.light_state, "helperOk": self.helper_ok})
+                       "lightOn": self.light_state, "helperOk": self.helper_ok, "fileBytes": self.pmbytes})
         return TOUCH_PALETTE[cidx][0]
 
     def action(self, p):
@@ -1552,7 +1573,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.21</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.23</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1582,7 +1603,8 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="panel"><div class="ph">Printing Progress</div><div class="pb pr"><div id="ring" class="ring"><b id="ringTxt">0%</b></div><div class="prc">
 <div class="kv"><b id="file"></b><span id="times" class="muted"></span></div>
 <div class="prog"><div id="bar"></div></div>
-<div class="kv"><span><span id="pct" class="big ok">-</span> <span id="layer" class="muted"></span></span><span id="res" class="muted"></span></div>
+<div class="kv"><span><span id="pct" class="big ok">-</span></span><span id="res" class="muted"></span></div>
+<div class="tgrid" style="margin-top:8px"><div class="tcell"><div class="lbl">Speed</div><div class="big" id="pSpd">-</div></div><div class="tcell"><div class="lbl">Flow</div><div class="big" id="pFlow">-</div></div><div class="tcell"><div class="lbl">Filament</div><div class="big" id="pFil">-</div></div><div class="tcell"><div class="lbl">Layer</div><div class="big" id="pLayer">-</div></div></div>
 <div style="display:flex;gap:8px;margin-top:8px"><button id="bPause" onclick="ask('pause')">Pause</button><button id="bResume" onclick="ask('resume')">Resume</button><button id="bCancel" class="danger" onclick="ask('cancel')">Stop</button></div></div></div></div>
 <div class="panel"><div class="ph">Filament (click a spool to edit)</div><div class="pb"><div id="heads"></div>
 <div id="aceSw" style="display:none">
@@ -1655,7 +1677,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="panel" id="aceBox" style="display:none"><div class="ph"><span class="dot off" id="aceDot"></span><span id="aceTitle">ACE Pro</span><span class="sp"></span><span class="muted" id="aceEs"></span></div><div class="pb">
 <div id="aceWarn" class="acewarn" style="display:none"></div>
 <div class="acegrid"><div class="acecard"><div class="acecap">Dryer</div><div class="kv"><span>Status</span><span id="dryS">-</span></div><div class="kv"><span>Temperature</span><span id="dryT">-</span></div><div class="kv"><span>Time left</span><span id="dryR">-</span></div>
-<div class="ctl"><span class="lbl">Temp</span><input id="dryTemp" type="number" min="35" max="65" value="50" style="width:70px"><span class="lbl">Minutes</span><input id="dryDur" type="number" min="10" max="720" value="240" style="width:80px"></div>
+<div class="ctl"><span class="lbl">Temp</span><input id="dryTemp" type="number" min="35" max="65" value="50" style="width:70px"><span class="lbl">Hours</span><input id="dryDurH" type="number" min="0" max="12" value="4" style="width:60px"><span class="lbl">Min</span><input id="dryDurM" type="number" min="0" max="59" value="0" style="width:60px"></div>
 <div class="ctl"><button class="pri" onclick="dryGo(true)">Start</button><button onclick="dryGo(false)">Stop</button></div></div>
 <div class="acecard"><div class="acecap">Tool map and stats</div><div class="kv"><span>Tool map</span><span id="aceMap">-</span></div><div class="kv"><span>Tool changes</span><span id="aceTc">-</span></div><div class="kv"><span>Purged</span><span id="aceFl">-</span></div><div class="kv"><span>Cuts</span><span id="aceCt">-</span></div><div class="muted">Map editing is not in this version.</div></div></div>
 </div></div>
@@ -1675,6 +1697,27 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return
 function t(v){return (v===undefined||v===null)?"-":(Math.round(v*10)/10).toFixed(1)+" °C"}
 function tt(s){s=Math.round(s||0);var h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+"h "+(m<10?"0":"")+m+"m"}
 function pc(v){return (v===undefined||v===null)?"-":Math.round(v*100)+" %"}
+function dryFmt(secs){secs=Math.round(secs||0);var mins=Math.round(secs/60),h=Math.floor(mins/60),m=mins%60;return h>0?(h+"h "+m+"min"):(m+"min")}
+// B-100: some ACE Pro firmware/protocol versions report this block as "dryer_status" instead of "dryer"
+// in the per-instance status - the driver's own console command already checks both for backward
+// compatibility; Klipper's get_status() (what Moonraker, and so this plugin, reads) does not, so
+// a.dryer could be empty even while the dryer was actively running.
+function dryerData(a){return (a&&(a.dryer_status||a.dryer))||{}}
+function dryMinutes(h,m){h=parseInt(h,10);m=parseInt(m,10); return (isNaN(h)?0:h)*60+(isNaN(m)?0:m)}
+function filamentUsedStr(mm){return (mm===undefined||mm===null)?"-":((mm/1000).toFixed(2)+" m")}
+function fileProgress(vs,fb){
+  // Matches Fluidd's own default "File" progress mode: how far virtual_sdcard.file_position is through the
+  // gcode body only (between gcode_start_byte and gcode_end_byte from the file's metadata), not the whole file
+  // - OrcaSlicer's header comments and footer stats otherwise count as printed too, which is why this used to
+  // read very differently from Fluidd on the same file (B-098). Falls back to the plain file-position ratio
+  // (virtual_sdcard.progress) when the file's metadata doesn't have those two byte offsets, same as Fluidd.
+  var fp=vs.file_position,a=vs.progress;
+  if(fb&&fb.start!=null&&fb.end!=null&&fp!=null){
+    if(fp<=fb.start)return 0;
+    if(fp>=fb.end)return 1;
+    var num=fp-fb.start,den=fb.end-fb.start;
+    if(num>0&&den>0)return num/den}
+  return a||0}
 var FGT=0;
 function forget(){var a=$("addr").value.trim(),b=$("forget");if(!a)return;
   if(!FGT){b.textContent="Erase "+a+"? Press again";FGT=setTimeout(function(){FGT=0;b.textContent="Forget"},5000);return}
@@ -1863,16 +1906,17 @@ var ARMT=null,STEP=10;
 function mvState(){}
 function setStep(n){STEP=n;var sp=$("mvStep").children;for(var i=0;i<sp.length;i++)sp[i].className=(parseInt(sp[i].textContent)===n)?"on":""}
 function dryGo(on){
-  var tp=parseInt($("dryTemp").value),du=parseInt($("dryDur").value);
-  if(on&&(!(tp>=35&&tp<=65)||!(du>=10&&du<=720))){toast("Dryer: 35 to 65 C, 10 to 720 minutes");return}
+  var tp=parseInt($("dryTemp").value);
+  var du=dryMinutes($("dryDurH").value,$("dryDurM").value);
+  if(on&&(!(tp>=35&&tp<=65)||!(du>=10&&du<=720))){toast("Dryer: 35 to 65 C, between 10 min and 12h total");return}
   $("res").className="muted";$("res").textContent="sending...";orca.postMessage({type:"action",kind:"dry",on:on,temp:tp,dur:du})}
 function renderAce(s){var a=s.ace_instance_0,st=s.ace||{};var box=$("aceBox");if(!a){box.style.display="none";return}
   box.style.display="block";var cs=String(a.connection_state||""),ok=(!cs||/^(connected|ok|ready|online)$/i.test(cs));
   $("aceDot").className="dot "+(ok?"on":"red");$("aceTitle").textContent="ACE Pro 1 - "+(ok?"Connected":"Not connected")+(a.status?" ("+a.status+")":"");
   var ev=((s.save_variables||{}).variables||{}).wm_endless;$("aceEs").textContent="Endless spool: "+((ev!=null?Number(ev)===1:st.endless_spool_enabled)?"On":"Off");
   var w=$("aceWarn");if(!ok){w.style.display="block";w.textContent="ACE is not connected (state: "+cs+"). If a print is running, check the USB cable and power.";}else w.style.display="none";
-  var d=a.dryer||{};
-  $("dryS").textContent=d.status||"-";$("dryT").textContent=(a.temp!=null?t(a.temp):"-")+" / "+(d.target_temp>0?t(d.target_temp):"off");$("dryR").textContent=d.remain_time>0?(Math.floor(d.remain_time/60)+" h "+(d.remain_time%60)+" min"):"-";
+  var d=dryerData(a);
+  $("dryS").textContent=d.status||"-";$("dryT").textContent=(a.temp!=null?t(a.temp):"-")+" / "+(d.target_temp>0?t(d.target_temp):"off");$("dryR").textContent=d.remain_time>0?dryFmt(d.remain_time):"-";
   var tm=st.tool_map||{},keys=Object.keys(tm);$("aceMap").textContent=keys.length?keys.map(function(x){return x+"→"+tm[x]}).join(", "):"default (slots 1-4)";
   var q=st.stats||{};$("aceTc").textContent=q.tool_changes!=null?q.tool_changes:"-";$("aceFl").textContent=q.purge_mm!=null?(q.purge_mm.toFixed(1)+" mm"):"-";$("aceCt").textContent=q.cuts!=null?q.cuts:"-"}
 
@@ -1982,9 +2026,12 @@ function render(m){
   $("bPause").disabled=st!=="printing";$("bResume").disabled=st!=="paused";$("bCancel").disabled=!(st==="printing"||st==="paused");mvState();
   $("file").textContent=ps.filename||"";
   var wh0=s.webhooks||{},kb=$("klip");if(wh0.state&&wh0.state!=="ready"){kb.style.display="block";kb.innerHTML="<b class='err'>Klipper is "+esc(wh0.state)+"</b><div class='muted'>"+esc(wh0.state_message||"")+"</div>"}else kb.style.display="none";
-  var p=(ds.progress!==undefined&&ds.progress!==null?ds.progress:vs.progress)||0;
+  var p=fileProgress(vs,m.fileBytes);
   $("bar").style.width=Math.round(p*100)+"%";var rp=Math.round(p*100);$("ring").style.background="conic-gradient(var(--g) 0 "+rp+"%,rgba(128,128,128,.25) 0)";$("ringTxt").textContent=rp+"%";$("pct").textContent=Math.round(p*100)+" %";
-  var inf=ps.info||{};$("layer").textContent=inf.total_layer?("layer "+(inf.current_layer||0)+" / "+inf.total_layer):"";
+  var inf=ps.info||{};
+  $("pLayer").textContent=inf.total_layer?((inf.current_layer||0)+" / "+inf.total_layer):"-";
+  var gm0=s.gcode_move||{};$("pSpd").textContent=pc(gm0.speed_factor);$("pFlow").textContent=pc(gm0.extrude_factor);
+  $("pFil").textContent=filamentUsedStr(ps.filament_used);
   var left=(st==="printing"&&p>0.02)?Math.max(0,ps.print_duration/p-ps.print_duration):null;
   $("times").textContent="printing "+tt(ps.print_duration)+(left!==null?" · about "+tt(left)+" left":"")+" · total "+tt(ps.total_duration);
   SLOTS=m.slots||[];ZRV=!!s["gcode_macro _ZR_SET_TOOL_INFO"];var cur=(s.toolhead||{}).extruder||"extruder";var h="";var names=["extruder","extruder1","extruder2","extruder3"];var sl=m.slots||[];
