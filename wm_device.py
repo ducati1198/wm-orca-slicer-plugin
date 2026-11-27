@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.17"
+# version = "0.29.18"
 # ///
-"""WM Device v0.29.17.
+"""WM Device v0.29.18.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -694,7 +694,12 @@ class Poller:
                 if self.tick % 5 == 0:   # slow data: filament colours/materials and the console messages
                     try:
                         self.slots = parse_slots(http_text(base + "/server/files/config/tmt1.ini"))
-                        self.has_tmt1 = True   # this printer has a factory screen board (tmt1.ini exists)
+                        # tmt1.ini is shared storage for colour/material swatches: a vanilla Klipper + Fluidd
+                        # printer keeps one too (so Fluidd shows the same swatches), so its existence alone does
+                        # NOT mean "factory screen board". Only treat it as factory when this printer also lacks
+                        # the vanilla installer's _ZR_SET_TOOL_INFO macro - the same factory/vanilla signal used
+                        # everywhere else in this file (see the helper-card and spool-save logic below).
+                        self.has_tmt1 = "gcode_macro _ZR_SET_TOOL_INFO" not in (self.objects or [])
                     except Exception:  # noqa: BLE001
                         pass
                     if self.has_tmt1 and "gcode_macro WM_CHAMBER_LIGHT" not in (self.objects or []):
@@ -1007,7 +1012,9 @@ class Poller:
         if new != cur:
             upload_config(self.base, "", "tmt1.ini", new)      # only this one file, only the [slot] lines of one toolhead
         self.slots = parse_slots(new)
-        self.has_tmt1 = True   # a successful tmt1.ini write confirms this printer has a factory screen board
+        # same factory/vanilla signal as the poller above: a successful tmt1.ini write only means a factory
+        # screen board when this printer also lacks the vanilla installer's _ZR_SET_TOOL_INFO macro.
+        self.has_tmt1 = "gcode_macro _ZR_SET_TOOL_INFO" not in (self.objects or [])
         if self.last:
             self.post({"type": "state", "base": self.base, "status": self.last, "time": time.time(), "cams": self.cams,
                        "slots": merge_saved(self.slots, self.last), "messages": self.messages, "hasTmt1": self.has_tmt1,
@@ -1504,7 +1511,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.17</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.18</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>

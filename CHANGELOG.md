@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.18
+- Fixed: the **Screen live-refresh helper** card (and the "Install helper on printer" button) could show up on a **vanilla (upstream) Klipper** printer too, not just factory printers. The card's visibility check only looked for `tmt1.ini` existing - but a vanilla Klipper + Fluidd setup keeps a `tmt1.ini` too (for the same colour/material swatches), so its presence alone never meant "factory screen board". The check now also confirms the printer lacks the vanilla installer's `_ZR_SET_TOOL_INFO` macro, the same signal already used elsewhere in the plugin to tell factory and vanilla printers apart.
+
 ## 0.29.11 - 0.29.17
 - **One-click installer:** when the live screen refresh helper is not detected on a factory printer (macOS/Linux builds of Orca), the Device tab now shows a **Screen live-refresh helper** card with an **Install helper on printer** button. It connects over SSH (factory default login pre-filled, editable) and installs the helper for you - no terminal needed. See the README's [2.4b, Option A](README.md#24b-factory-printers-live-screen-refresh-optional).
 - Fixed: the Light button could crash with a `TypeError` when the helper was unreachable (a helper-status check returned the wrong "not available" value instead of `None`).
