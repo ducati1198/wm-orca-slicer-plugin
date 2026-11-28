@@ -271,7 +271,7 @@ Lower on the Status page, the tab shows two cards. They appear only when the pri
 - **Swap on a tangle:** also swap when a tangle sensor pauses the print.
 - The ring and the chips (T1 to T4) show which toolhead is the spare for which, or **no spare**.
 
-**ACE Pro card:** the connection state (for example *connected, ready*), the **Dryer** (status, temperature, time left in **h/min**, and **Temp**, **Hours** and **Minutes** boxes with **Start** and **Stop**) and **Tool map and stats** (the ACE tool map, tool changes, purged length, cuts).
+**ACE Pro card:** the connection state (for example *connected, ready*), the **Dryer** (status, temperature, time left in **h/min**, and **Temp** and **Hour** boxes with **Start** and **Stop** — duration is whole hours only, 0-12) and **Tool map and stats** (the ACE tool map, tool changes, purged length, cuts).
 
 ### 2.5 Filament in the file → toolhead
 

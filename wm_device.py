@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.27"
+# version = "0.29.28"
 # ///
-"""WM Device v0.29.27.
+"""WM Device v0.29.28.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -1625,7 +1625,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.27</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.28</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -1735,7 +1735,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="panel" id="aceBox" style="display:none"><div class="ph"><span class="dot off" id="aceDot"></span><span id="aceTitle">ACE Pro</span><span class="sp"></span><span class="muted" id="aceEs"></span></div><div class="pb">
 <div id="aceWarn" class="acewarn" style="display:none"></div>
 <div class="acegrid"><div class="acecard"><div class="acecap">Dryer</div><div class="kv"><span>Status</span><span id="dryS">-</span></div><div class="kv"><span>Temperature</span><span id="dryT">-</span></div><div class="kv"><span>Time left</span><span id="dryR">-</span></div>
-<div class="ctl"><span class="lbl">Temp</span><input id="dryTemp" type="number" min="35" max="65" value="50" style="width:70px"><span class="lbl">Hours</span><input id="dryDurH" type="number" min="0" max="12" value="4" style="width:60px"><span class="lbl">Min</span><input id="dryDurM" type="number" min="0" max="59" value="0" style="width:60px"></div>
+<div class="ctl"><span class="lbl">Temp</span><input id="dryTemp" type="number" min="35" max="65" value="50" style="width:70px"><span class="lbl">Hour</span><input id="dryDurH" type="number" min="0" max="12" value="4" style="width:60px"></div>
 <div class="ctl"><button class="pri" onclick="dryGo(true)">Start</button><button onclick="dryGo(false)">Stop</button></div></div>
 <div class="acecard"><div class="acecap">Tool map and stats</div><div class="kv"><span>Tool map</span><span id="aceMap">-</span></div><div class="kv"><span>Tool changes</span><span id="aceTc">-</span></div><div class="kv"><span>Purged</span><span id="aceFl">-</span></div><div class="kv"><span>Cuts</span><span id="aceCt">-</span></div><div class="muted">Map editing is not in this version.</div></div></div>
 </div></div>
@@ -1761,7 +1761,7 @@ function dryFmt(secs){secs=Math.round(secs||0);var mins=Math.round(secs/60),h=Ma
 // compatibility; Klipper's get_status() (what Moonraker, and so this plugin, reads) does not, so
 // a.dryer could be empty even while the dryer was actively running.
 function dryerData(a){return (a&&(a.dryer_status||a.dryer))||{}}
-function dryMinutes(h,m){h=parseInt(h,10);m=parseInt(m,10); return (isNaN(h)?0:h)*60+(isNaN(m)?0:m)}
+function dryMinutes(h){h=parseInt(h,10); return (isNaN(h)?0:h)*60}
 function filamentUsedStr(mm){return (mm===undefined||mm===null)?"-":((mm/1000).toFixed(2)+" m")}
 function fileProgress(vs,fb){
   // Matches Fluidd's own default "File" progress mode: how far virtual_sdcard.file_position is through the
@@ -1971,7 +1971,7 @@ function mvState(){}
 function setStep(n){STEP=n;var sp=$("mvStep").children;for(var i=0;i<sp.length;i++)sp[i].className=(parseInt(sp[i].textContent)===n)?"on":""}
 function dryGo(on){
   var tp=parseInt($("dryTemp").value);
-  var du=dryMinutes($("dryDurH").value,$("dryDurM").value);
+  var du=dryMinutes($("dryDurH").value);
   if(on&&(!(tp>=35&&tp<=65)||!(du>=10&&du<=720))){toast("Dryer: 35 to 65 C, between 10 min and 12h total");return}
   $("res").className="muted";$("res").textContent="sending...";orca.postMessage({type:"action",kind:"dry",on:on,temp:tp,dur:du})}
 function renderAce(s){var a=s.ace_instance_0,st=s.ace||{};var box=$("aceBox");if(!a){box.style.display="none";return}

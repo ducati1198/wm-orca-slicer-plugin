@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.28
+- Changed: the Dryer card's duration input dropped the separate **Minutes** box - it's now **Hour** only (whole hours, 0-12), same as the **Temp** box's layout. A dry run can no longer be set to a sub-hour or non-whole-hour duration from this box.
+
 ## 0.29.27
 - Fixed: the "Install helper on printer" button's SSH step no longer copies the whole process environment into the `ssh` subprocess (Orca Cloud's security review flagged this as Medium risk: "reads environment variables, which can include secrets and API keys"). It now passes through only `PATH` and `HOME` (needed to find the `ssh` binary and `~/.ssh`) plus the two `SSH_ASKPASS` variables it already sets - nothing else from the environment reaches the subprocess. No behaviour change for the person using the button.
 

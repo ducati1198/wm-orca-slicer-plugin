@@ -91,15 +91,15 @@ check("dryerData: prefers 'dryer_status' over 'dryer' when both are present (mat
 check("dryerData: empty object, not undefined, when neither key exists (callers do d.status safely)",
   JSON.stringify(ctx.dryerData({})) === "{}");
 
-// ---- dryMinutes() - the new Hours+Minutes duration input ------------------------------------
-check("dryMinutes(4,0) -> 240 (the old single-field default, 4 hours)",
-  ctx.dryMinutes(4, 0) === 240);
-check("dryMinutes(1,30) -> 90",
-  ctx.dryMinutes(1, 30) === 90);
-check("dryMinutes('','') -> 0 (empty inputs don't throw NaN through)",
-  ctx.dryMinutes("", "") === 0);
-check("dryMinutes(0,45) -> 45",
-  ctx.dryMinutes(0, 45) === 45);
+// ---- dryMinutes() - the Hour-only duration input (0.29.28 dropped the Minutes box) ------------
+check("dryMinutes(4) -> 240 (4 hours)",
+  ctx.dryMinutes(4) === 240);
+check("dryMinutes(1) -> 60",
+  ctx.dryMinutes(1) === 60);
+check("dryMinutes('') -> 0 (empty input doesn't throw NaN through)",
+  ctx.dryMinutes("") === 0);
+check("dryMinutes(12) -> 720 (max hours)",
+  ctx.dryMinutes(12) === 720);
 
 // ---- filamentUsedStr() - new Filament field in the Printing Progress panel -------------------
 check("filamentUsedStr(2345) -> '2.35 m'",
