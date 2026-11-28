@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.29.27
+- Fixed: the "Install helper on printer" button's SSH step no longer copies the whole process environment into the `ssh` subprocess (Orca Cloud's security review flagged this as Medium risk: "reads environment variables, which can include secrets and API keys"). It now passes through only `PATH` and `HOME` (needed to find the `ssh` binary and `~/.ssh`) plus the two `SSH_ASKPASS` variables it already sets - nothing else from the environment reaches the subprocess. No behaviour change for the person using the button.
+
+## 0.29.26
+- Changed: PA nozzle temperature default is now 260 C (previously 270), matching a printer-side material table update. Only PA itself moved - PA-CF and PA-GF stay at 280.
+
+## 0.29.25
+- Added: saved printers in the quick-switch dropdown can now be given a nickname (e.g. "Main RPi4" / "pi400 test") with the new **Name** button next to the address field, instead of only showing the raw IP. Stored alongside the existing saved-host list; picking a printer from the dropdown still reconnects immediately as before.
+- Added: the Klipper fault banner (previously only shown for `webhooks.state` not "ready", i.e. Klipper error/shutdown) now also shows when the print itself reports state `error`, with Klipper's own message.
+- Added: three new **Printer** buttons in the Controls panel - **Restart Klipper** (`/printer/restart`), **Restart firmware** (`/printer/firmware_restart`, recovers from an MCU shutdown) and **Emergency stop** (`/printer/emergency_stop`, same effect as `M112`). All three call Moonraker's dedicated endpoints directly (not a gcode script), so they work even while Klipper is in an error state, and are not blocked by a current print.
+
 ## 0.29.24
 - Changed: PLA nozzle temperature default is now 220 C for all PLA types. Matches the printer-side material table (Klipper, ACE driver and KlipperScreen) on both the production printer and the test pair. Updated in the `ZRT` default-temperature table used by the Spool editor's material dropdown (`spMat()`) to pre-fill the **Nozzle temp** box: **PLA**, **PLA Silk**, **PLA Matte**, **PLA Metal** and **PLA+** move from 210/215 C to 220 C; **PLA-CF** was already 220 C. No other material's default changed, and no macro names, arguments or material numbers changed - the plugin still calls `_ZR_SET_TOOL_INFO T= HEX= MAT= TEMP=` exactly as before.
 

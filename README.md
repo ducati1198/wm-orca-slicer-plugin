@@ -193,6 +193,7 @@ Without these, Klipper's `print_stats.info` stays empty and Layer shows `-` (Spe
 |---|---|
 | Address list and address box | Pick a saved printer or type a new address |
 | **Connect** | Connects to that address and remembers it |
+| **Name** | Gives the currently entered/picked address a nickname (e.g. "Main RPi4"), shown in the dropdown instead of the raw IP. Leave it blank and press OK to clear a nickname |
 | **Forget** | Erases the address from the list. Press it twice (the second press confirms within 5 seconds). The plugin then also stops adding that address by itself, for example from Orca's printer settings. Typing it and pressing **Connect** brings it back |
 | **Hide camera** / **Show camera** | Hides the camera picture |
 
@@ -200,6 +201,7 @@ Without these, Klipper's `print_stats.info` stays empty and Layer shows `-` (Spe
 
 - **Move:** the Y/X pad (the centre **Home** circle homes all axes and asks first), the **Z axis** buttons and the step size (1, 10 or 50 mm). Moves apply at once and are blocked while printing. The **Unload Menu** button (only on printers that have the macro) opens the unload window; it works while paused too. The Z buttons use the printer's Z coordinate.
 - **Controls:** a temperature box and **Set** for Tool 1 to 4, the bed and the chamber, fan sliders (part, auxiliary, air filter), the speed factor (50 to 200 %), and **Cool down**.
+- **Printer:** **Restart Klipper**, **Restart firmware** (recovers from an MCU shutdown without a full reboot) and **Emergency stop** (same effect as `M112`). These call Moonraker's own restart/emergency-stop endpoints directly, so they work even while Klipper is in an error state, and aren't blocked by a print in progress.
 - **Light:** toggles the chamber light. Works on any printer with a `WM_CHAMBER_LIGHT` Klipper macro, and also on factory printers with no such macro, via the optional live screen refresh helper below (2.4b). The button turns green while the light is on: on a `WM_CHAMBER_LIGHT` printer (vanilla Klipper) this reads the real state straight over Moonraker's own power-device API, no helper needed; on factory printers it needs the helper installed, since that's also what reports the real state back.
 - **Spools:** click a spool in the filament card to set the material, nozzle temperature and colour, then **Save to printer**.
   - **On a Pi running upstream Klipper** (the `WM_Ultra_Vanilla_Klipper` setup): saved with the printer's `_ZR_SET_TOOL_INFO` macro, which the printer's own screens and Fluidd read, including the nozzle temperature.
@@ -342,7 +344,7 @@ The plugin finds out which of the two applies by asking the printer whether the 
 ## 4. Safety: what the plugin sends
 
 - **It reads** with `GET` requests every 2 seconds (status, files, history, messages, camera).
-- **It writes only when you press a button:** Pause, Resume, Stop, Print a file, a temperature, a fan or the speed, a move, Home, Cool down, the light, saving a spool, and the ACE Pro buttons. Stop, Print, Home and similar buttons ask first.
+- **It writes only when you press a button:** Pause, Resume, Stop, Print a file, a temperature, a fan or the speed, a move, Home, Cool down, the light, saving a spool, Restart Klipper, Restart firmware, Emergency stop, and the ACE Pro buttons. Stop, Print, Home and similar buttons ask first.
 - **It builds the G-code itself** from numbers it checks first. The page can never send free G-code to the printer.
 - **Printer addresses are not in the code.** They live only in the plugin's data folder on your computer.
 - **Network:** only to the printer addresses you gave it, on port 7125 and the printer's camera. Nothing goes to the internet.

@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.24"
+# version = "0.29.27"
 # ///
-"""WM Device v0.29.24.
+"""WM Device v0.29.27.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -276,10 +276,14 @@ def ssh_run_with_password(host, user, password, command, timeout=25):
         with open(askpass_path, "w") as f:
             f.write("#!/bin/sh\necho \"%s\"\n" % password.replace("\\", "\\\\").replace('"', '\\"'))
         os.chmod(askpass_path, stat.S_IRWXU)
-        env = dict(os.environ)
-        env["SSH_ASKPASS"] = askpass_path
-        env["SSH_ASKPASS_REQUIRE"] = "force"
-        env.pop("DISPLAY", None)
+        # Deliberately NOT dict(os.environ): that would copy the whole process environment
+        # (anything else sitting in it, unrelated API keys/tokens included) into a child process
+        # that only ever needs to find the `ssh` binary (PATH) and the user's ~/.ssh (HOME).
+        env = {"SSH_ASKPASS": askpass_path, "SSH_ASKPASS_REQUIRE": "force"}
+        for k in ("PATH", "HOME"):
+            v = os.environ.get(k)
+            if v:
+                env[k] = v
         argv = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=8",
                 "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
                 "%s@%s" % (user, host), command]
@@ -450,6 +454,37 @@ def known_hosts():
             if h not in out:
                 out.append(h)
     return out
+
+
+def _labels_file():
+    return os.path.join(_own_dir(), "host_labels.json")
+
+
+def host_labels():
+    """Nicknames the person gave saved printers (host -> label), for the quick-switch dropdown."""
+    try:
+        with open(_labels_file(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str) and v}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def set_host_label(host, label):
+    """Save or clear (empty label) the nickname for a saved printer host. Never raises."""
+    if not host:
+        return
+    try:
+        labels = host_labels()
+        if label:
+            labels[host] = label
+        else:
+            labels.pop(host, None)
+        os.makedirs(os.path.dirname(_labels_file()), exist_ok=True)
+        with open(_labels_file(), "w", encoding="utf-8") as fh:
+            json.dump(labels, fh)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _trace(msg):
@@ -1237,6 +1272,23 @@ class Poller:
                     raise ValueError("the print must be paused")
                 script = f"_WM_ENDLESS_CONTINUE FROM={frm} TO={to}"
                 text = f"endless spool: toolhead {frm + 1} to toolhead {to + 1}"
+            elif kind == "restart":
+                # Moonraker's dedicated endpoint (not a gcode RESTART) - works even if Klipper is in
+                # an error/shutdown state, since that's exactly when a restart is needed.
+                http_json(self.base + "/printer/restart", post=True, timeout=30)
+                self.post({"type": "result", "ok": True, "text": "Klipper restart sent"})
+                return
+            elif kind == "firmware_restart":
+                # Reconnects to the MCU(s) - recovers from an MCU shutdown/fault without a full reboot.
+                http_json(self.base + "/printer/firmware_restart", post=True, timeout=30)
+                self.post({"type": "result", "ok": True, "text": "firmware restart sent"})
+                return
+            elif kind == "estop":
+                # Moonraker's emergency_stop endpoint (same effect as M112): immediately shuts down
+                # heaters and motion. Always allowed, printing or not - that's the point of this button.
+                http_json(self.base + "/printer/emergency_stop", post=True, timeout=10)
+                self.post({"type": "result", "ok": True, "text": "emergency stop sent"})
+                return
             else:
                 raise ValueError("unknown control")
             # Moonraker answers a gcode POST only when the command has finished, so homing and moves need minutes.
@@ -1573,11 +1625,11 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.24</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.27</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
-<input id="addr" placeholder="printer address, e.g. 192.168.1.50"><button class="pri" onclick="connect()">Connect</button><button id="forget" onclick="forget()">Forget</button><button id="thBtn" onclick="cycleTheme()">Style: Current</button>
+<input id="addr" placeholder="printer address, e.g. 192.168.1.50"><button class="pri" onclick="connect()">Connect</button><button onclick="nameHost()">Name</button><button id="forget" onclick="forget()">Forget</button><button id="thBtn" onclick="cycleTheme()">Style: Current</button>
 <span id="conn" class="muted"></span><span id="state" class="state">-</span><span style="flex:1"></span>
 <button onclick="refreshCam()">Refresh camera</button> <button id="camBtn" onclick="toggleCam()">Hide camera</button></div>
 <div id="err" class="err"></div>
@@ -1672,6 +1724,12 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="cxc"><div class="cxl">Speed</div>
 <div class="sl"><span class="n">Factor</span><input type="range" id="sp" min="50" max="200" step="5" value="100" oninput="slv(this)" onchange="doSpeed(this.value)"><span class="p" id="spv">100 %</span></div>
 <div class="pre"><span onclick="doSpeed(50)">50</span><span onclick="doSpeed(100)">100</span><span onclick="doSpeed(150)">150</span><span onclick="doSpeed(200)">200</span></div></div>
+<div class="cxc"><div class="cxl">Printer</div>
+<div class="btns" style="flex-direction:column;gap:8px">
+<button onclick="act({kind:'restart'})">Restart Klipper</button>
+<button onclick="act({kind:'firmware_restart'})">Restart firmware</button>
+<button class="danger" onclick="act({kind:'estop'})">Emergency stop</button>
+</div></div>
 <div class="btns"><button onclick="doAct({kind:'cooldown'})">Cool down</button></div></div>
 </div></div>
 <div class="panel" id="aceBox" style="display:none"><div class="ph"><span class="dot off" id="aceDot"></span><span id="aceTitle">ACE Pro</span><span class="sp"></span><span class="muted" id="aceEs"></span></div><div class="pb">
@@ -1790,7 +1848,13 @@ function askDelTL(){var x=Object.keys(TSEL),b=$("tdelbar");if(!x.length){$("res"
 function loadHist(){$("hist").textContent="loading...";orca.postMessage({type:"history"})}
 setInterval(function(){try{orca.postMessage({type:"ping"})}catch(e){}},3000);
 reqFils();setInterval(reqFils,6000);
-function addOpt(a){if(!a)return;var s=$("preset");for(var i=0;i<s.options.length;i++){if(s.options[i].value===a)return}var o=document.createElement("option");o.value=a;o.textContent=a;s.insertBefore(o,s.options[s.options.length-1])}
+var LABELS={};
+function addOpt(a){if(!a)return;var s=$("preset");for(var i=0;i<s.options.length;i++){if(s.options[i].value===a)return}var o=document.createElement("option");o.value=a;o.textContent=LABELS[a]||a;s.insertBefore(o,s.options[s.options.length-1])}
+function refreshPresetLabels(){var s=$("preset");for(var i=0;i<s.options.length;i++){var v=s.options[i].value;if(v)s.options[i].textContent=LABELS[v]||v}}
+function nameHost(){var a=$("addr").value.trim();if(!a){$("err").textContent="Pick or enter a printer address first.";return}
+  var cur=LABELS[a]||"";var v=prompt("Name for "+a+" (blank to clear):",cur);if(v===null)return;v=v.trim().slice(0,40);
+  if(v)LABELS[a]=v;else delete LABELS[a];refreshPresetLabels();syncPreset(a);
+  try{orca.postMessage({type:"label",addr:a,label:v})}catch(e){}}
 function connect(){FIRST=true;var a=$("addr").value.trim();addOpt(a);syncPreset(a);try{localStorage.setItem("wmdev_addr",a);var L=JSON.parse(localStorage.getItem("wmdev_addrs")||"[]");if(a&&L.indexOf(a)<0){L.push(a);localStorage.setItem("wmdev_addrs",JSON.stringify(L.slice(-8)))}}catch(e){}
   $("conn").textContent="connecting...";orca.postMessage({type:"connect",addr:a})}
 var THN=["","a","b"],THL=["Current","A bento graphite","B soft slate"];
@@ -1808,7 +1872,7 @@ var SPC=[["White","FFFFFF"],["Beige","F3E8C8"],["Brown","9A6738"],["Grey","C7D5D
 var ZRM=["PLA","PLA Silk","ABS","PETG","PLA Matte","PLA Metal","ABS Matte","PETG Matte","PVA","TPE","Marble","HIPS","TPU","PET","Wood","ASA","PLA+","PLA-CF","PETG-CF","PA","PA-CF","PC","ABS-CF","PA-GF","PC-ABS","PP","BVOH"];
 var ZRC=[1,3,8,6,4,15,8,6,13,10,15,14,10,15,15,9,2,5,7,11,11,12,8,11,12,15,10];
 var ZRV=false;
-var ZRT=[220,220,250,240,220,220,250,240,200,225,210,235,225,240,200,255,220,220,250,270,280,270,260,280,260,230,210];
+var ZRT=[220,220,250,240,220,220,250,240,200,225,210,235,225,240,200,255,220,220,250,260,280,270,260,280,260,230,210];
 function spMat(){if(ZRV)return;var mi=parseInt($("spM").value);$("spN").value=mi>=0?ZRT[mi]:""}
 var SPI=0,SLOTS=[];
 var HSV=[0,1,1];
@@ -2025,7 +2089,10 @@ function render(m){
   var st=ps.state||"-";if(LASTST&&LASTST!==st&&LASTST==="printing"&&(st==="complete"||st==="error"||st==="cancelled"||st==="paused"))toast("Print "+st+(ps.filename?": "+ps.filename:""));LASTST=st;STATE=st;var e=$("state");e.textContent=st;e.className="state s-"+st;var e2=$("st2");e2.textContent=st;e2.className="big "+(st==="printing"?"ok":(st==="error"?"err":""));
   $("bPause").disabled=st!=="printing";$("bResume").disabled=st!=="paused";$("bCancel").disabled=!(st==="printing"||st==="paused");mvState();
   $("file").textContent=ps.filename||"";
-  var wh0=s.webhooks||{},kb=$("klip");if(wh0.state&&wh0.state!=="ready"){kb.style.display="block";kb.innerHTML="<b class='err'>Klipper is "+esc(wh0.state)+"</b><div class='muted'>"+esc(wh0.state_message||"")+"</div>"}else kb.style.display="none";
+  var wh0=s.webhooks||{},kb=$("klip");
+  if(wh0.state&&wh0.state!=="ready"){kb.style.display="block";kb.innerHTML="<b class='err'>Klipper is "+esc(wh0.state)+"</b><div class='muted'>"+esc(wh0.state_message||"")+"</div>"}
+  else if(st==="error"){kb.style.display="block";kb.innerHTML="<b class='err'>Print error</b><div class='muted'>"+esc(ps.message||"")+"</div>"}
+  else kb.style.display="none";
   var p=fileProgress(vs,m.fileBytes);
   $("bar").style.width=Math.round(p*100)+"%";var rp=Math.round(p*100);$("ring").style.background="conic-gradient(var(--g) 0 "+rp+"%,rgba(128,128,128,.25) 0)";$("ringTxt").textContent=rp+"%";$("pct").textContent=Math.round(p*100)+" %";
   var inf=ps.info||{};
@@ -2072,7 +2139,7 @@ function render(m){
   $("upd").textContent="updated "+new Date(m.time*1000).toLocaleTimeString();}
 orca.onMessage(function(m){
   if(m.type==="state")render(m);
-  if(m.type==="defaults"){(m.hosts||[]).forEach(addOpt);if(m.host)addOpt(m.host);if(!$("addr").value.trim()){if(m.last){$("addr").value=m.last;addOpt(m.last);syncPreset(m.last);connect()}else if(m.host){$("addr").value=m.host;syncPreset(m.host)}}}
+  if(m.type==="defaults"){LABELS=m.labels||{};(m.hosts||[]).forEach(addOpt);if(m.host)addOpt(m.host);refreshPresetLabels();if(!$("addr").value.trim()){if(m.last){$("addr").value=m.last;addOpt(m.last);syncPreset(m.last);connect()}else if(m.host){$("addr").value=m.host;syncPreset(m.host)}}}
   if(m.type==="orcafils"){FILS=m.fils||[];FILERR=m.err||"";if(LS&&LS.print_stats)renderFil(LS,SLOTS)}
   if(m.type==="approve"){$("err").textContent="New printer "+m.host+": Orca approves a printer address only while the plugin loads. It is saved now. Close Orca and open it again, approve the permission dialog for this printer, then press Connect. You only do this once per new printer.";$("conn").textContent="needs approval";return}
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
@@ -2701,7 +2768,9 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                     saved.append(last)
                 diag = _diag_text()
                 self._post({"type": "defaults", "host": ph.replace("http://", "").replace(":7125", ""),
-                            "hosts": saved, "last": last, "diag": diag})
+                            "hosts": saved, "last": last, "diag": diag, "labels": host_labels()})
+            elif kind == "label":
+                set_host_label(_host_of(base_url(message.get("addr"))), str(message.get("label", "")).strip()[:40])
             elif kind == "ping":
                 if self.poller is not None:
                     self.poller.beat()

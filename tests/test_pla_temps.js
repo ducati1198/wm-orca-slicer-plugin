@@ -50,11 +50,14 @@ function tempOf(material) {
   check("ZRT default for " + m + " is 220", tempOf(m) === 220, tempOf(m));
 });
 
-// Everything else keeps its previous default - this rule only touches PLA types.
+// PA (plain) moved to 260 C - PA-CF and PA-GF were left alone.
+check("ZRT default for PA is 260", tempOf("PA") === 260, tempOf("PA"));
+
+// Everything else keeps its previous default - these rules only touch PLA types and plain PA.
 const unchanged = {
   "ABS": 250, "PETG": 240, "ABS Matte": 250, "PETG Matte": 240, "PVA": 200, "TPE": 225,
   "Marble": 210, "HIPS": 235, "TPU": 225, "PET": 240, "Wood": 200, "ASA": 255,
-  "PETG-CF": 250, "PA": 270, "PA-CF": 280, "PC": 270, "ABS-CF": 260, "PA-GF": 280,
+  "PETG-CF": 250, "PA-CF": 280, "PC": 270, "ABS-CF": 260, "PA-GF": 280,
   "PC-ABS": 260, "PP": 230, "BVOH": 210
 };
 Object.keys(unchanged).forEach(function (m) {
