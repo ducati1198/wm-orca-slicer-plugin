@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.29"
+# version = "0.29.30"
 # ///
-"""WM Device v0.29.29.
+"""WM Device v0.29.30.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -1650,7 +1650,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.29</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.30</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>
@@ -2164,7 +2164,7 @@ function render(m){
   $("upd").textContent="updated "+new Date(m.time*1000).toLocaleTimeString();}
 orca.onMessage(function(m){
   if(m.type==="state")render(m);
-  if(m.type==="defaults"){LABELS=m.labels||{};(m.hosts||[]).forEach(addOpt);if(m.host)addOpt(m.host);refreshPresetLabels();if(!$("addr").value.trim()){if(m.last){$("addr").value=m.last;addOpt(m.last);syncPreset(m.last);connect()}else if(m.host){$("addr").value=m.host;syncPreset(m.host)}}}
+  if(m.type==="defaults"){if(m.labels)LABELS=m.labels;(m.hosts||[]).forEach(addOpt);if(m.host)addOpt(m.host);refreshPresetLabels();if(!$("addr").value.trim()){if(m.last){$("addr").value=m.last;addOpt(m.last);syncPreset(m.last);connect()}else if(m.host){$("addr").value=m.host;syncPreset(m.host)}}}
   if(m.type==="orcafils"){FILS=m.fils||[];FILERR=m.err||"";if(LS&&LS.print_stats)renderFil(LS,SLOTS)}
   if(m.type==="approve"){$("err").textContent="New printer "+m.host+": Orca approves a printer address only while the plugin loads. It is saved now. Close Orca and open it again, approve the permission dialog for this printer, then press Connect. You only do this once per new printer.";$("conn").textContent="needs approval";return}
   if(m.type==="error"){$("err").textContent="Cannot read the printer: "+m.text;$("conn").textContent="not connected"}
@@ -2763,14 +2763,14 @@ class WmDeviceTab(orca.pages.PagesPluginCapabilityBase):
                     # prompts once per URL. Remember it, so the next start approves it in the single dialog.
                     remember_host(base)
                     set_last_host(_host_of(base))
-                    self._post({"type": "defaults", "diag": _diag_text()})
+                    self._post({"type": "defaults", "diag": _diag_text(), "labels": host_labels()})
                     self._post({"type": "approve", "host": _host_of(base),
                                 "info": (PERM["req"] or "no request") + (" | read error: " + PERM["err"] if PERM["err"] else "")})
                     return
                 MAPSTATE["base"] = base
                 remember_host(base)
                 set_last_host(_host_of(base))
-                self._post({"type": "defaults", "diag": _diag_text()})
+                self._post({"type": "defaults", "diag": _diag_text(), "labels": host_labels()})
                 self.poller.set_base(MAPSTATE["base"])
             elif kind == "forget":
                 forget_host(base_url(message.get("addr")))

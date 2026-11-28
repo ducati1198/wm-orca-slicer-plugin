@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.30
+- Fixed: a printer's nickname (the **Name** button) disappeared from the dropdown every time you switched printers, reconnected, or reopened Orca - the real everyday cause of names "not sticking" (0.29.29 fixed a narrower case: a name surviving a *plugin update*, which is a different bug and stays fixed). Cause: picking a printer/pressing Connect sends a short internal "defaults" message with no labels in it, and the UI's one `defaults` handler was unconditionally replacing the whole nickname list with whatever that message carried - emptying it out whenever a message without labels arrived. The backend now includes the saved nicknames in that message too, and the UI no longer wipes its nickname list when a message happens not to carry one.
+
 ## 0.29.29
 - Fixed: a printer's nickname (the **Name** button) could disappear after a plugin update. `host_labels()`/`set_host_label()` only read/wrote a single folder for `host_labels.json`, but `_own_dir()` (where that folder lives) can resolve to a different path after an update - the known-hosts list already handled this by also saving to Orca's own `storage()` folder and merging both on read; nicknames now do the same, so a name survives even if the plugin's own folder changes.
 
