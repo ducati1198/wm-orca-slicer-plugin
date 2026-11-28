@@ -5,9 +5,9 @@
 # name = "WM Device"
 # description = "Device tab for the WonderMaker Ultra series and ACE Pro printers (Moonraker): live status, temperature trends, toolheads with colour and material, position, camera, grouped messages, file list, print history, pause/resume/cancel and start print. The plugin talks to the printer; the tab only shows what it receives. On factory printers (the stock touchscreen board), the chamber light button is always shown, and a spool colour/material change saved here normally only shows up on the touchscreen after its app restarts. Controlling the light and the instant screen/colour updates need the optional wm-screen-sync-http helper - without it, the light button just explains how to install it, and the touchscreen catches up on its own next app restart. If you install that optional helper on the printer over SSH (one-time command, see the README's 'Factory printers: live screen refresh' section), the touchscreen updates immediately after a colour/material change and after a light toggle, and the light button itself turns green while the light is on. On a factory printer without the helper, the Device tab now also shows an 'Install helper on printer' button (macOS/Linux builds of Orca only) that runs the same one-line SSH install for you, after you confirm a warning popup; the username and password fields are pre-filled with the factory default login and can be edited."
 # author = "ducati1198"
-# version = "0.29.28"
+# version = "0.29.29"
 # ///
-"""WM Device v0.29.28.
+"""WM Device v0.29.29.
 
 Reads the printer with GET requests every 2 s. The only things it ever WRITES are the buttons you press:
 Pause, Resume, Cancel (asks first), Print a file (asks first), and the Controls card: set a temperature,
@@ -456,22 +456,43 @@ def known_hosts():
     return out
 
 
+def _labels_files():
+    """Every folder that may hold host_labels.json: this file's own plugin_data first, then Orca's storage()
+    when it works - same two locations known_hosts() checks, so a name survives a plugin update even if
+    _own_dir() resolves to a different folder afterwards."""
+    out = [os.path.join(_own_dir(), "host_labels.json")]
+    try:
+        alt = os.path.join(str(orca.host.plugin.storage()), "host_labels.json")
+        if alt not in out:
+            out.append(alt)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _labels_file():
-    return os.path.join(_own_dir(), "host_labels.json")
+    return _labels_files()[0]
 
 
 def host_labels():
-    """Nicknames the person gave saved printers (host -> label), for the quick-switch dropdown."""
-    try:
-        with open(_labels_file(), "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str) and v}
-    except Exception:  # noqa: BLE001
-        return {}
+    """Nicknames the person gave saved printers (host -> label), for the quick-switch dropdown.
+    Union of every saved copy; a later folder in _labels_files() wins on conflict."""
+    out = {}
+    for fp in _labels_files():
+        try:
+            with open(fp, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            for k, v in data.items():
+                if isinstance(k, str) and isinstance(v, str) and v:
+                    out[k] = v
+        except Exception:  # noqa: BLE001
+            pass
+    return out
 
 
 def set_host_label(host, label):
-    """Save or clear (empty label) the nickname for a saved printer host. Never raises."""
+    """Save or clear (empty label) the nickname for a saved printer host, in every folder that can be
+    written, so the load-time read always finds it (same approach as _write_hosts()). Never raises."""
     if not host:
         return
     try:
@@ -480,9 +501,13 @@ def set_host_label(host, label):
             labels[host] = label
         else:
             labels.pop(host, None)
-        os.makedirs(os.path.dirname(_labels_file()), exist_ok=True)
-        with open(_labels_file(), "w", encoding="utf-8") as fh:
-            json.dump(labels, fh)
+        for fp in _labels_files():
+            try:
+                os.makedirs(os.path.dirname(fp), exist_ok=True)
+                with open(fp, "w", encoding="utf-8") as fh:
+                    json.dump(labels, fh)
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001
         pass
 
@@ -1625,7 +1650,7 @@ body[data-th="b"] .ni.sel,body[data-th="a"] .ni.sel{color:var(--orca-fg)}
 <div class="ni" id="n-hist" onclick="showTab('hist')">History</div>
 <div class="ni" id="n-tl" onclick="showTab('tl')">Timelapse</div>
 <div class="ni" id="n-msgs" onclick="showTab('msgs')">Messages</div>
-<div class="muted" style="padding:16px" id="verbox">v0.29.28</div></div>
+<div class="muted" style="padding:16px" id="verbox">v0.29.29</div></div>
 <div id="content">
 <div class="top">
 <select id="preset" onchange="pick()"><option value="">Other address...</option></select>

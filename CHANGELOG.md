@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.29.29
+- Fixed: a printer's nickname (the **Name** button) could disappear after a plugin update. `host_labels()`/`set_host_label()` only read/wrote a single folder for `host_labels.json`, but `_own_dir()` (where that folder lives) can resolve to a different path after an update - the known-hosts list already handled this by also saving to Orca's own `storage()` folder and merging both on read; nicknames now do the same, so a name survives even if the plugin's own folder changes.
+
 ## 0.29.28
 - Changed: the Dryer card's duration input dropped the separate **Minutes** box - it's now **Hour** only (whole hours, 0-12), same as the **Temp** box's layout. A dry run can no longer be set to a sub-hour or non-whole-hour duration from this box.
 

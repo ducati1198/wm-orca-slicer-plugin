@@ -18,6 +18,7 @@ import ast
 import json
 import os
 import sys
+import tempfile
 import types
 import urllib.request
 
@@ -182,6 +183,35 @@ def main():
           "gcode_macro WM_CHAMBER_LIGHT" in want)
     check("WANT subscribes gcode_macro _ZR_SET_TOOL_INFO (needed for the factory/vanilla signal)",
           "gcode_macro _ZR_SET_TOOL_INFO" in want)
+
+    # ---- host_labels()/set_host_label() - the Name button survives a plugin-folder change,
+    # same as known_hosts() already does (F: name disappeared after an update) ----------------
+    set_host_label = ns["set_host_label"]
+    host_labels_fn = ns["host_labels"]
+    orca_mod = sys.modules["orca"]
+
+    storage_dir = tempfile.mkdtemp()
+    orca_mod.host.plugin = types.SimpleNamespace(storage=lambda: storage_dir)
+
+    dir_a = tempfile.mkdtemp()
+    ns["_own_dir"] = lambda: dir_a
+    set_host_label("10.0.0.5", "Main RPi4")
+    labels_a = host_labels_fn()
+    check("host_labels: name is readable right after setting it",
+          labels_a.get("10.0.0.5") == "Main RPi4", detail=str(labels_a))
+
+    # simulate a plugin update: _own_dir() now resolves to a different folder, storage() unchanged
+    dir_b = tempfile.mkdtemp()
+    ns["_own_dir"] = lambda: dir_b
+    labels_b = host_labels_fn()
+    check("host_labels: name survives a simulated plugin-folder change (found via storage() copy)",
+          labels_b.get("10.0.0.5") == "Main RPi4", detail=str(labels_b))
+
+    # clearing the name (empty label) removes it from both saved copies
+    set_host_label("10.0.0.5", "")
+    labels_c = host_labels_fn()
+    check("host_labels: clearing a name removes it",
+          "10.0.0.5" not in labels_c, detail=str(labels_c))
 
     # ---- clean up fixture pollution from a fake OSError test, if any ------------------------
 
